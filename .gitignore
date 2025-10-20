@@ -1,1 +1,35 @@
 .env
+# Python bytecode and cache
+__pycache__/
+crime_monitoring.log
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
+
+# Data and output files
+data/
+output/
+dakhleyaVideos/
+src/models/output/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE and editor files
+.vscode/
+.idea/
+
+# Migration files (if auto-generated)
+
+# Test and coverage files
+.coverage
+coverage.xml
+htmlcov/
+
+# Other secrets
+*.secret
+*.key
