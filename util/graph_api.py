@@ -36,4 +36,4 @@ async def parse_webhook_data(request: Request):
             mediaid = value.get("media_id") or value.get("mediaid")
             if mediaid:
                 parse_status = True
-    return data, parse_status, mediaid if 'mediaid' in locals() else None
+    return data, parse_status, mediaid
