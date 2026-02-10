@@ -1,9 +1,42 @@
-"""Models package for crime monitoring AI."""
+"""
+Models module for crime monitoring AI.
+"""
 
-from .audio_transcriber import transcribe_audio
-from .video_captioner import caption_video
-from .text_classifier import classify_crime, CrimeClassification
-from .aggregator import process_video
+from .audio_analyzer import AudioAnalyzer, analyze_audio
+from .video_analyzer import VideoAnalyzer, analyze_video
+from .media_processor import MediaProcessor, process_media
+from .schemas import (
+    AudioAnalysis,
+    AudioEvent,
+    VideoAnalysis,
+    DetectedEntities,
+    SceneLandmarks,
+    PossibleCrime,
+    Weapon,
+    Vehicle,
+    LicensePlate,
+    MediaAnalysisResult
+)
 
-__all__ = ['transcribe_audio', 'caption_video', 'classify_crime', 'CrimeClassification', 'process_video']
+__all__ = [
+    # Analyzers
+    'AudioAnalyzer',
+    'VideoAnalyzer',
+    'MediaProcessor',
+    # Functions
+    'analyze_audio',
+    'analyze_video',
+    'process_media',
+    # Schemas
+    'AudioAnalysis',
+    'AudioEvent',
+    'VideoAnalysis',
+    'DetectedEntities',
+    'SceneLandmarks',
+    'PossibleCrime',
+    'Weapon',
+    'Vehicle',
+    'LicensePlate',
+    'MediaAnalysisResult',
+]
 

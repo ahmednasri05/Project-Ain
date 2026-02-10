@@ -6,6 +6,7 @@ import logging
 import sys
 from pathlib import Path
 
+
 def setup_logging(log_level: str = "INFO", log_file: str = "crime_monitoring.log"):
     """
     Configure logging for the application.
@@ -28,10 +29,10 @@ def setup_logging(log_level: str = "INFO", log_file: str = "crime_monitoring.log
         ]
     )
     
-    # Set specific loggers
-    logging.getLogger('openai').setLevel(logging.WARNING)  # Reduce OpenAI SDK noise
-    logging.getLogger('httpx').setLevel(logging.WARNING)   # Reduce HTTP noise
-    logging.getLogger('google').setLevel(logging.WARNING)  # Reduce Google SDK noise
+    # Set specific loggers to reduce noise
+    logging.getLogger('openai').setLevel(logging.WARNING)
+    logging.getLogger('httpx').setLevel(logging.WARNING)
+    logging.getLogger('google').setLevel(logging.WARNING)
     
     logger = logging.getLogger(__name__)
     logger.info(f"Logging configured - Level: {log_level}, File: {log_file}")
