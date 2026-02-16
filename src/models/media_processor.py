@@ -119,6 +119,8 @@ class MediaProcessor:
             logger.info(f"Danger Score: {video_analysis.danger_score}/10")
             logger.info(f"Crimes Detected: {len(video_analysis.possible_crimes)}")
             logger.info(f"Audio Events: {len(audio_analysis.audio_events)}")
+            if video_analysis.scene_landmarks.approximate_location:
+                logger.info(f"Location: {video_analysis.scene_landmarks.approximate_location}")
             logger.info(f"Output: {output_file}")
             logger.info("="*60)
             
@@ -196,6 +198,13 @@ class MediaProcessor:
             from openai import AsyncOpenAI
             client = AsyncOpenAI(api_key=self.audio_analyzer.api_key)
             
+            # Build location context
+            location_context = ""
+            if video_analysis.scene_landmarks.approximate_location:
+                location_context = f"- Approximate Location: {video_analysis.scene_landmarks.approximate_location}\n"
+            elif video_analysis.scene_landmarks.identified_landmark:
+                location_context = f"- Identified Landmark: {video_analysis.scene_landmarks.identified_landmark}\n"
+            
             assessment_prompt = f"""Based on the following video and audio analysis, provide a comprehensive overall assessment of the situation:
 
 VIDEO ANALYSIS:
@@ -205,7 +214,7 @@ VIDEO ANALYSIS:
 - People Count: {video_analysis.detected_entities.people_count}
 - Weapons: {len(video_analysis.detected_entities.weapons)}
 - Vehicles: {len(video_analysis.detected_entities.vehicles)}
-
+{location_context}
 AUDIO ANALYSIS:
 - Transcript: {audio_analysis.transcript[:500]}...
 - Sentiment: {audio_analysis.sentiment}
@@ -214,7 +223,8 @@ AUDIO ANALYSIS:
 Provide a 2-3 sentence assessment that summarizes:
 1. What is happening
 2. The level of danger/concern
-3. Key evidence from both video and audio"""
+3. Key evidence from both video and audio
+4. Location context if available"""
 
             response = await client.chat.completions.create(
                 model="gpt-4o-mini",

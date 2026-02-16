@@ -42,6 +42,7 @@ class VideoAnalyzer:
         """
         logger.info(f"Analyzing video: {video_path}")
         
+        # Try-except block required: move all logic inside the try block so there is at least one except or finally for each try.
         try:
             # Read video file
             with open(video_path, 'rb') as f:
@@ -76,6 +77,7 @@ Provide analysis in this EXACT JSON format:
   "scene_landmarks": {
     "identified_landmark": "landmark name or null",
     "architectural_style": "description or null",
+    "approximate_location": "predicted location (city, district, street) or null",
     "confidence": 0.0-1.0,
     "location_hints": ["hint1", "hint2"]
   },
@@ -95,14 +97,20 @@ Guidelines:
 1. **Weapons**: knife, firearm, blunt_object, sharp_object, improvised_weapon, etc.
 2. **Vehicles**: sedan, suv, truck, motorcycle, etc. Include color always.
 3. **License Plates**: Try to read any visible license plates. For Arabic plates, transcribe as-is.
-4. **Landmarks**: Identify any recognizable locations, buildings, bridges, signs.
-5. **Crimes**: assault, theft, vandalism, traffic_violation, public_disturbance, etc.
-6. **Danger Score**: 0=safe, 1-3=minor concern, 4-6=moderate danger, 7-8=serious danger, 9-10=critical emergency
-7. **Timestamps**: Use MM:SS format. If exact time unknown, estimate based on video position.
-8. The video language is Arabic. Include any visible Arabic text.
+4. **Landmarks**: Identify any recognizable locations, buildings, bridges, signs, streets.
+5. **Approximate Location**: Based on landmarks, signs, architecture, license plates, and any visible text, predict the most specific location possible. Format: "City, District, Street" or "City, Area description". Include Egyptian governorate if identifiable. Be as detailed and accurate as possible.
+6. **Crimes**: assault, theft, vandalism, traffic_violation, public_disturbance, etc.
+7. **Danger Score**: 0=safe, 1-3=minor concern, 4-6=moderate danger, 7-8=serious danger, 9-10=critical emergency
+8. **Timestamps**: Use MM:SS format. If exact time unknown, estimate based on video position.
+9. The video context is Egypt. Include any visible Arabic text, street signs, or regional indicators.
 
-Be thorough and precise. Only include detected items with reasonable confidence."""
-
+Be thorough and precise. Only include detected items with reasonable confidence. For location prediction, use all available visual clues including:
+- Recognizable landmarks (mosques, bridges, buildings)
+- Street signs and store names
+- License plate patterns (Egyptian governorate codes)
+- Architectural style (modern Cairo, old district, coastal, etc.)
+- Environmental features (Nile river, desert, urban density)
+"""
             # Run analysis in thread pool since genai client is sync
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(
@@ -190,7 +198,7 @@ Be thorough and precise. Only include detected items with reasonable confidence.
             )
             
             return result
-            
+
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse video analysis JSON: {str(e)}")
             logger.error(f"Raw response: {response.text if 'response' in locals() else 'No response'}")

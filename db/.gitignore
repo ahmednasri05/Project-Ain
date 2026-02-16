@@ -1,0 +1,10 @@
+# Temporary download files
+temp_downloads/
+*.mp4
+*.tmp
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+

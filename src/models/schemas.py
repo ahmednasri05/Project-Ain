@@ -60,6 +60,7 @@ class SceneLandmarks(BaseModel):
     """Identified scene landmarks and location info."""
     identified_landmark: Optional[str] = Field(None, description="Recognized landmark name")
     architectural_style: Optional[str] = Field(None, description="Architectural style or area description")
+    approximate_location: Optional[str] = Field(None, description="Predicted approximate location (city, district, street, or coordinates)")
     confidence: float = Field(default=0.0, description="Landmark identification confidence")
     location_hints: List[str] = Field(default_factory=list, description="Other location clues")
 
