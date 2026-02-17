@@ -7,7 +7,7 @@ import asyncio
 import sys
 import os
 
-# Add parent directory to path
+# Add parent directory to path gg
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from services import generate_video_fingerprint, check_and_save_fingerprints
