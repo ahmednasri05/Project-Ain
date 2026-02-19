@@ -20,6 +20,8 @@ from .video_fingerprint import (
     check_and_save_fingerprints
 )
 
+from .pipeline import run_pipeline, process_single_reel
+
 __all__ = [
     # Comment Parser
     "get_comments_for_sentiment_analysis",
@@ -34,5 +36,8 @@ __all__ = [
     "find_duplicate_videos",
     "save_video_hashes",
     "check_and_save_fingerprints",
+    # Pipeline
+    "run_pipeline",
+    "process_single_reel",
 ]
 

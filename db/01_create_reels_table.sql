@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS raw_instagram_reels (
   stats JSONB,                            
   
   -- STORAGE REFERENCES (Permanent)
-  storage_bucket_path TEXT,               -- Path in Supabase Storage (e.g., "DRLS0KOAdv2.mp4")
+  storage_bucket_path TEXT,               -- Path to video in Supabase Storage (e.g., "videos/DRLS0KOAdv2.mp4")
+  storage_audio_path  TEXT,               -- Path to audio in Supabase Storage (e.g., "audio/DRLS0KOAdv2.mp3")
   
   -- SYSTEM
   created_at TIMESTAMPTZ DEFAULT NOW()

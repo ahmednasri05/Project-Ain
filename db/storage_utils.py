@@ -5,10 +5,20 @@ Async functions for downloading Instagram videos and uploading to Supabase Stora
 
 import os
 import asyncio
+import mimetypes
 from typing import Optional
 import aiohttp
 import aiofiles
 from .supabase_client import get_supabase_client, get_storage_bucket
+
+
+def _content_type_for(file_path: str) -> str:
+    """
+    Infer MIME content-type from file extension.
+    Falls back to 'application/octet-stream' for unknown types.
+    """
+    mime, _ = mimetypes.guess_type(file_path)
+    return mime or "application/octet-stream"
 
 
 # Temporary download directory
@@ -75,13 +85,14 @@ async def upload_to_supabase(local_path: str, bucket_name: str, remote_path: str
                 print(f"Note: Could not create bucket (may already exist): {e}")
         
         # Read file and upload
+        content_type = _content_type_for(local_path)
         with open(local_path, "rb") as f:
             file_data = f.read()
-            
+
             response = supabase.storage.from_(bucket_name).upload(
                 path=remote_path,
                 file=file_data,
-                file_options={"content-type": "video/mp4", "upsert": "true"}
+                file_options={"content-type": content_type, "upsert": "true"}
             )
         
         return remote_path

@@ -26,6 +26,8 @@ def get_supabase_client() -> Client:
         ValueError: If required environment variables are missing
     """
     global _supabase_client
+            # Debug: Print the Supabase key being used
+    print(f"[Supabase] Using key: {_supabase_client}... (truncated)")
     
     if _supabase_client is None:
         url = os.getenv("SUPABASE_URL")
@@ -35,7 +37,10 @@ def get_supabase_client() -> Client:
             raise ValueError("SUPABASE_URL environment variable is required")
         if not key:
             raise ValueError("SUPABASE_KEY or SUPABASE_ANON_KEY environment variable is required")
-        
+
+        # Debug: Print the Supabase key being used
+        print(f"[Supabase] Using key: {key[:10]}... (truncated)")
+
         _supabase_client = create_client(url, key)
     
     return _supabase_client

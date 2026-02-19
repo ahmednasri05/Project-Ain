@@ -27,19 +27,28 @@ async def get_reel_by_shortcode(shortcode: str) -> Optional[Dict[str, Any]]:
     return await asyncio.to_thread(_fetch)
 
 
-async def save_reel(reel_json: Dict[str, Any], storage_path: Optional[str] = None) -> Dict[str, Any]:
+async def save_reel(
+    reel_json: Dict[str, Any],
+    storage_path: Optional[str] = None,
+    audio_path: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     Insert or update an Instagram reel in the database.
-    
+
     Args:
         reel_json: Instagram post JSON payload
-        storage_path: Path in Supabase Storage (optional)
-        
+        storage_path: Video path in Supabase Storage (optional)
+        audio_path: Audio path in Supabase Storage (optional)
+
     Returns:
         Dict: Inserted/updated database record
-        
+
     Example:
-        reel_record = await save_reel(reel_json, "videos/DRLS0KOAdv2.mp4")
+        reel_record = await save_reel(
+            reel_json,
+            storage_path="videos/DRLS0KOAdv2.mp4",
+            audio_path="audio/DRLS0KOAdv2.mp3",
+        )
     """
     def _insert():
         supabase = get_supabase_client()
@@ -63,6 +72,7 @@ async def save_reel(reel_json: Dict[str, Any], storage_path: Optional[str] = Non
             "posted_at": reel_json.get("timestamp"),
             "stats": stats,
             "storage_bucket_path": storage_path,
+            "storage_audio_path": audio_path,
         }
         
         # Upsert (insert or update if exists)
