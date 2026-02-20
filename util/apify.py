@@ -116,16 +116,7 @@ async def _fetch_results(run_id: str) -> list:
                 text = await response.text()
                 raise Exception(f"Failed to fetch results ({response.status}): {text}")
 
-            results = await response.json()
-            
-            # Debug: Save raw response to file for inspection
-            import json
-            debug_file = f"apify_debug_{run_id}.json"
-            with open(debug_file, "w", encoding="utf-8") as f:
-                json.dump(results, f, indent=2, ensure_ascii=False)
-            print(f"[Apify] Debug: Saved raw response to {debug_file}")
-            
-            return results
+            return await response.json()
 
 
 def _extract_comments(raw: Dict[str, Any]) -> list:
@@ -200,23 +191,6 @@ async def scrape_reel(shortcode: str) -> Optional[Dict[str, Any]]:
         return None
 
     raw = items[0]
-
-    # Debug: Log available fields to help diagnose missing videoUrl
-    print(f"[Apify] Raw response has {len(raw)} fields")
-    print(f"[Apify] All fields: {', '.join(sorted(raw.keys()))}")
-    
-    if "videoUrl" not in raw or not raw.get("videoUrl"):
-        print(f"\n[Apify] ⚠️  WARNING: videoUrl missing or empty!")
-        print(f"[Apify] Available video/URL fields:")
-        for key in sorted(raw.keys()):
-            if "video" in key.lower() or "url" in key.lower() or "display" in key.lower():
-                value = raw[key]
-                if isinstance(value, str) and len(value) > 100:
-                    print(f"  - {key}: {value[:100]}...")
-                else:
-                    print(f"  - {key}: {value}")
-    else:
-        print(f"[Apify] videoUrl found: {raw['videoUrl'][:80]}..." if len(raw.get('videoUrl', '')) > 80 else f"[Apify] videoUrl found: {raw.get('videoUrl')}")
 
     # 4. Normalize reel and extract comments
     reel = _normalize_payload(raw)

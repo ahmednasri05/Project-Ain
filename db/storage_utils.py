@@ -1,15 +1,13 @@
 """
 Supabase Storage Utilities
-Async functions for downloading Instagram videos and uploading to Supabase Storage.
+Async functions for uploading files to and managing Supabase Storage.
 """
 
 import os
 import asyncio
 import mimetypes
 from typing import Optional
-import aiohttp
-import aiofiles
-from .supabase_client import get_supabase_client, get_storage_bucket
+from .client import get_supabase_client, get_storage_bucket
 
 
 def _content_type_for(file_path: str) -> str:
@@ -19,40 +17,6 @@ def _content_type_for(file_path: str) -> str:
     """
     mime, _ = mimetypes.guess_type(file_path)
     return mime or "application/octet-stream"
-
-
-# Temporary download directory
-TEMP_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "temp_downloads")
-
-
-async def download_video_stream(url: str, output_path: str) -> str:
-    """
-    Download a video from URL using streaming to handle large files.
-    
-    Args:
-        url: Video URL (Instagram or other)
-        output_path: Local path to save the video
-        
-    Returns:
-        str: Path to downloaded file
-        
-    Raises:
-        Exception: If download fails
-    """
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
-            if response.status != 200:
-                raise Exception(f"Failed to download video: HTTP {response.status}")
-            
-            async with aiofiles.open(output_path, "wb") as f:
-                async for chunk in response.content.iter_chunked(8192):
-                    if chunk:
-                        await f.write(chunk)
-    
-    print(f"✓ Downloaded video to {output_path}")
-    return output_path
 
 
 async def upload_to_supabase(local_path: str, bucket_name: str, remote_path: str) -> str:
@@ -102,56 +66,6 @@ async def upload_to_supabase(local_path: str, bucket_name: str, remote_path: str
     return result
 
 
-async def download_and_upload_reel(video_url: str, shortcode: str, bucket_name: Optional[str] = None) -> str:
-    """
-    Combined helper: Download Instagram video and upload to Supabase Storage.
-    Automatically cleans up temporary files.
-    
-    Args:
-        video_url: Instagram video URL
-        shortcode: Instagram shortcode (used for filename)
-        bucket_name: Optional bucket name (defaults to env variable or "videos")
-        
-    Returns:
-        str: Storage bucket path (e.g., "DRLS0KOAdv2.mp4")
-        
-    Example:
-        storage_path = await download_and_upload_reel(
-            "https://...", 
-            "DRLS0KOAdv2"
-        )
-    """
-    if bucket_name is None:
-        bucket_name = get_storage_bucket()
-    
-    # Ensure temp directory exists
-    os.makedirs(TEMP_DIR, exist_ok=True)
-    
-    # Local temporary path
-    temp_path = os.path.join(TEMP_DIR, f"{shortcode}.mp4")
-    
-    # Remote path in bucket (directly at root, no subdirectory)
-    remote_path = f"{shortcode}.mp4"
-    
-    try:
-        # Download video
-        await download_video_stream(video_url, temp_path)
-        
-        # Upload to Supabase
-        storage_path = await upload_to_supabase(temp_path, bucket_name, remote_path)
-        
-        return storage_path
-        
-    finally:
-        # Clean up temporary file
-        if os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-                print(f"✓ Cleaned up temporary file: {temp_path}")
-            except Exception as e:
-                print(f"Warning: Could not delete temp file {temp_path}: {e}")
-
-
 async def get_public_url(bucket_name: str, file_path: str) -> str:
     """
     Get the public URL for a file in Supabase Storage.
@@ -184,7 +98,7 @@ async def delete_from_storage(bucket_name: str, file_path: str) -> bool:
     """
     def _delete():
         supabase = get_supabase_client()
-        response = supabase.storage.from_(bucket_name).remove([file_path])
+        supabase.storage.from_(bucket_name).remove([file_path])
         return True
     
     try:
@@ -194,4 +108,37 @@ async def delete_from_storage(bucket_name: str, file_path: str) -> bool:
     except Exception as e:
         print(f"Error deleting file: {e}")
         return False
+
+
+def upload_large_file(bucket_name: str, file_path: str, destination_path: str) -> None:
+    """
+    Upload a large file to Supabase Storage in 5 MB chunks.
+    Use this instead of upload_to_supabase when regular uploads fail with
+    httpx connection errors on large video files.
+
+    Args:
+        bucket_name:      Supabase storage bucket name
+        file_path:        Local path to the file to upload
+        destination_path: Destination path within the bucket
+
+    Raises:
+        Exception: If any chunk upload fails
+    """
+    client = get_supabase_client()
+    file_size = os.path.getsize(file_path)
+    chunk_size = 5 * 1024 * 1024  # 5 MB
+
+    with open(file_path, "rb") as f:
+        for chunk_start in range(0, file_size, chunk_size):
+            chunk = f.read(chunk_size)
+            headers = {
+                "Content-Range": f"bytes {chunk_start}-{chunk_start + len(chunk) - 1}/{file_size}"
+            }
+            response = client.storage.from_(bucket_name).upload(
+                destination_path, chunk, headers
+            )
+            if not response:
+                raise Exception(f"Failed to upload chunk at byte {chunk_start}")
+
+    print(f"✓ Large file uploaded: {bucket_name}/{destination_path}")
 

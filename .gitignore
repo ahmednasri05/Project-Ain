@@ -6,6 +6,10 @@ crime_monitoring.log
 .ipynb_checkpoints/
 notebooks/.ipynb_checkpoints/
 
+# Debug artifacts
+apify_debug_*.json
+downloads/
+
 # Data and output files
 data/
 output/

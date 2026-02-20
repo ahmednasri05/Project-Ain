@@ -1,39 +1,12 @@
 """
 Comment Parser Service
-Fetches and formats Instagram comments for LLM sentiment analysis.
+Formats Instagram comments for LLM sentiment analysis.
 """
 
-import asyncio
 from typing import List, Dict, Any, Optional
 from datetime import datetime
-import json
 
-
-async def fetch_comments_from_db(shortcode: str) -> List[Dict[str, Any]]:
-    """
-    Fetch all comments for a given reel from the database.
-    
-    Args:
-        shortcode: Instagram reel shortcode
-        
-    Returns:
-        List of comment dictionaries with nested structure
-    """
-    from db import get_supabase_client
-    
-    def _fetch():
-        supabase = get_supabase_client()
-        
-        # Fetch all comments for this reel
-        response = supabase.table("instagram_comments")\
-            .select("*")\
-            .eq("reel_shortcode", shortcode)\
-            .order("posted_at", desc=True)\
-            .execute()
-        
-        return response.data if response.data else []
-    
-    return await asyncio.to_thread(_fetch)
+from db import fetch_comments_from_db
 
 
 def build_comment_tree(comments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -230,40 +203,6 @@ async def get_comments_for_sentiment_analysis(
         )
 
 
-def create_sentiment_analysis_prompt(
-    shortcode: str,
-    reel_caption: Optional[str] = None,
-    comments_text: Optional[str] = None
-) -> str:
-    """
-    Create a complete prompt for sentiment analysis including reel context.
-    
-    Args:
-        shortcode: Instagram reel shortcode
-        reel_caption: Optional reel caption for context
-        comments_text: Pre-formatted comments text (or will be fetched)
-        
-    Returns:
-        Complete prompt string for LLM
-    """
-    prompt_parts = [
-        f"=== Instagram Reel: {shortcode} ===\n"
-    ]
-    
-    if reel_caption:
-        prompt_parts.append(f"Caption: {reel_caption}\n")
-    
-    prompt_parts.append("\n=== Comments ===\n")
-    
-    if comments_text:
-        prompt_parts.append(comments_text)
-    else:
-        prompt_parts.append("[Comments need to be fetched separately]")
-    
-    return "".join(prompt_parts)
-
-
-# Utility: Extract only text content (no metadata) for minimal token usage
 def extract_comment_texts_only(comments: List[Dict[str, Any]]) -> List[str]:
     """
     Extract only the text content from comments (flattened, no structure).

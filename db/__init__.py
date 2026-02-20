@@ -3,20 +3,24 @@ Database Package
 Supabase integration for Instagram reels and comments.
 """
 
-from .supabase_client import get_supabase_client, get_storage_bucket
-from .instagram_db import (
+from .client import get_supabase_client, get_storage_bucket
+from .crud import (
     save_reel,
     get_reel_by_shortcode,
+    increment_mention_count,
     save_comment_thread,
     verify_reel_exists,
-    bulk_save_comments
+    bulk_save_comments,
+    insert_pipeline_run,
+    update_pipeline_run,
+    insert_failed_request,
+    fetch_comments_from_db,
 )
 from .storage_utils import (
-    download_video_stream,
     upload_to_supabase,
-    download_and_upload_reel,
+    upload_large_file,
     get_public_url,
-    delete_from_storage
+    delete_from_storage,
 )
 
 __all__ = [
@@ -26,13 +30,18 @@ __all__ = [
     # Instagram DB
     "save_reel",
     "get_reel_by_shortcode",
+    "increment_mention_count",
     "save_comment_thread",
     "verify_reel_exists",
     "bulk_save_comments",
+    # Pipeline runs
+    "insert_pipeline_run",
+    "update_pipeline_run",
+    "insert_failed_request",
+    "fetch_comments_from_db",
     # Storage
-    "download_video_stream",
     "upload_to_supabase",
-    "download_and_upload_reel",
+    "upload_large_file",
     "get_public_url",
     "delete_from_storage",
 ]

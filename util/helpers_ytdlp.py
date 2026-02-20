@@ -34,8 +34,18 @@ async def download_video_ytdlp(media_url: str, media_id: str):
 
 
 async def extract_audio(video_path: str, filename: str, save_dir: str = SAVE_DIR):
+    """
+    Extract audio track from a video file.
+    Returns the path to the .mp3 file, or None if the video has no audio track.
+    Always closes the MoviePy clip so the video file handle is released.
+    """
     audio_path = os.path.join(save_dir, f"{filename}.mp3")
     clip = VideoFileClip(video_path)
-    await asyncio.to_thread(clip.audio.write_audiofile, audio_path)
-    clip.close()
+    try:
+        if clip.audio is None:
+            print(f"  – No audio track found in {os.path.basename(video_path)}")
+            return None
+        await asyncio.to_thread(clip.audio.write_audiofile, audio_path)
+    finally:
+        clip.close()
     return audio_path

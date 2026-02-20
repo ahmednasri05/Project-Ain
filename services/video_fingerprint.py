@@ -198,8 +198,11 @@ async def save_video_hashes(
             for fp in fingerprints
         ]
         
-        # Batch insert
-        response = supabase.table("video_frames").insert(payload).execute()
+        # Upsert so retried runs don't fail on the unique constraint
+        # (reel_shortcode, timestamp_seconds) added in migration 08.
+        response = supabase.table("video_frames").upsert(
+            payload, on_conflict="reel_shortcode,timestamp_seconds"
+        ).execute()
         
         return {
             "saved": True,
@@ -209,55 +212,41 @@ async def save_video_hashes(
     return await asyncio.to_thread(_insert)
 
 
-async def check_and_save_fingerprints(
-    shortcode: str,
+async def check_for_duplicates(
     fingerprints: List[Dict[str, Any]],
     hamming_threshold: int = 5,
     min_matching_frames: int = 3
 ) -> Dict[str, Any]:
     """
-    Main API: Check for duplicates FIRST, only save if no duplicates found.
-    
+    Read-only duplicate check. Does NOT write to the database.
+    Call this BEFORE the reel is saved to satisfy the FK constraint on video_frames.
+
     Args:
-        shortcode: Instagram reel shortcode
         fingerprints: List of {"timestamp_seconds": float, "hash": str}
-        hamming_threshold: Maximum Hamming distance for match (default: 5)
-        min_matching_frames: Minimum matching frames to consider duplicate (default: 3)
-        
+        hamming_threshold: Maximum Hamming distance for a frame match (default: 5)
+        min_matching_frames: Minimum matching frames to flag as duplicate (default: 3)
+
     Returns:
-        If duplicate:
-            {
-                "is_duplicate": True,
-                "duplicates": [{"shortcode": str, "matching_frames": int, ...}]
-            }
-        
-        If unique (saved):
-            {
-                "is_duplicate": False,
-                "saved": True,
-                "fingerprints_count": int,
-                "shortcode": str
-            }
-    
+        {
+            "is_duplicate": bool,
+            "duplicates": [{"shortcode": str, "matching_frames": int, "similarity": float, ...}]
+        }
+
     Example:
-        result = await check_and_save_fingerprints("DRLS0KOAdv2", fingerprints)
-        if result['is_duplicate']:
+        result = await check_for_duplicates(fingerprints)
+        if result["is_duplicate"]:
             print(f"Duplicate of: {result['duplicates'][0]['shortcode']}")
-        else:
-            print(f"Saved {result['fingerprints_count']} fingerprints")
     """
     print(f"\n{'='*60}")
     print(f"Checking {len(fingerprints)} fingerprints for duplicates...")
     print(f"{'='*60}")
-    
-    # Step 1: Check for duplicates
+
     duplicates = await find_duplicate_videos(
         fingerprints,
         hamming_threshold=hamming_threshold,
         min_matching_frames=min_matching_frames
     )
-    
-    # Step 2: Handle result
+
     if duplicates:
         print(f"\n⚠ DUPLICATE DETECTED!")
         print(f"  Found {len(duplicates)} matching video(s)")
@@ -265,24 +254,43 @@ async def check_and_save_fingerprints(
         print(f"  Matching frames: {duplicates[0]['matching_frames']}/{len(fingerprints)}")
         print(f"  Similarity: {duplicates[0]['similarity']:.1%}")
         print(f"{'='*60}\n")
-        
-        return {
-            "is_duplicate": True,
-            "duplicates": duplicates
-        }
     else:
-        print(f"\n✓ No duplicates found - saving fingerprints...")
-        
-        # Save to database
-        save_result = await save_video_hashes(shortcode, fingerprints)
-        
-        print(f"✓ Saved {save_result['count']} fingerprints for {shortcode}")
+        print(f"\n✓ No duplicates found")
         print(f"{'='*60}\n")
-        
-        return {
-            "is_duplicate": False,
-            "saved": True,
-            "fingerprints_count": save_result['count'],
-            "shortcode": shortcode
-        }
+
+    return {
+        "is_duplicate": bool(duplicates),
+        "duplicates": duplicates
+    }
+
+
+async def save_fingerprints(
+    shortcode: str,
+    fingerprints: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """
+    Persist fingerprints to the database.
+    Call this AFTER the reel has been saved to raw_instagram_reels to satisfy
+    the video_frames.reel_shortcode FK constraint.
+
+    Args:
+        shortcode: Instagram reel shortcode (must already exist in raw_instagram_reels)
+        fingerprints: List of {"timestamp_seconds": float, "hash": str}
+
+    Returns:
+        {"saved": bool, "fingerprints_count": int, "shortcode": str}
+
+    Example:
+        result = await save_fingerprints("DRLS0KOAdv2", fingerprints)
+        print(f"Saved {result['fingerprints_count']} fingerprints")
+    """
+    save_result = await save_video_hashes(shortcode, fingerprints)
+
+    print(f"✓ Saved {save_result['count']} fingerprints for {shortcode}")
+
+    return {
+        "saved": True,
+        "fingerprints_count": save_result["count"],
+        "shortcode": shortcode
+    }
 
