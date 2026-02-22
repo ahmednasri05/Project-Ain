@@ -57,6 +57,7 @@ from db import (
     save_reel, bulk_save_comments, upload_to_supabase, get_storage_bucket,
     get_reel_by_shortcode, increment_mention_count,
     insert_pipeline_run, update_pipeline_run, insert_failed_request,
+    save_processed_crime_report,
 )
 from .video_fingerprint import generate_video_fingerprint, check_for_duplicates, save_fingerprints
 from .comment_formatter import get_comments_for_sentiment_analysis
@@ -296,16 +297,14 @@ async def process_single_reel(
 
                 # ── Step 8: Comment sentiment gate ────────────────────
                 elif _current_step == 8:
-                    if skip_sentiment:
-                        print("\n[6c/7] Comment sentiment gate skipped (--skip-sentiment flag)")
-                    elif comments:
+                    if comments:
                         print("\n[6c/7] Running comment sentiment gate...")
                         comments_text    = await get_comments_for_sentiment_analysis(shortcode)
                         sentiment_result = await SentimentAnalyzer().analyze_sentiment(comments_text)
                         print(f"  ✓ Sentiment label : {sentiment_result.label}")
                         print(f"  ✓ Explanation     : {sentiment_result.explanation}")
 
-                        if sentiment_result.label == "SPAM_SARCASM":
+                        if sentiment_result.label == "SPAM_SARCASM" and not skip_sentiment:
                             print(f"  ⚠ Comments classified as SPAM_SARCASM — skipping AI analysis")
                             _result = {
                                 "status": "filtered",
@@ -337,10 +336,19 @@ async def process_single_reel(
                     print(f"  ✓ Sentiment    : {sentiment}")
                     print(f"  ✓ Action       : {action}")
 
+                    # Save the processed crime report to the database
+                    print(f"  → Saving crime report to database...")
+                    crime_report = await save_processed_crime_report(
+                        shortcode=shortcode,
+                        media_analysis_result=analysis
+                    )
+                    print(f"  ✓ Crime report saved (DB id: {crime_report['id']})")
+
                     _result = {
                         "status": "success",
                         "shortcode": shortcode,
                         "reel_id": reel_record["id"],
+                        "report_id": crime_report["id"],
                         "danger_score": danger,
                         "crimes": len(crimes),
                         "sentiment": sentiment,

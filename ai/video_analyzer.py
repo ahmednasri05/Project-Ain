@@ -63,6 +63,7 @@ Provide analysis in this EXACT JSON format:
     "weapons": [
       {"type": "weapon_type", "confidence": 0.0-1.0, "timestamp": "MM:SS", "description": "details"}
     ],
+    #only if relevant to crime detection:
     "vehicles": [
       {
         "type": "vehicle_type",
@@ -72,6 +73,7 @@ Provide analysis in this EXACT JSON format:
       }
     ],
     "people_count": number,
+    #other objects relevant to crime detection
     "other_objects": ["object1", "object2"]
   },
   "scene_landmarks": {
@@ -89,8 +91,7 @@ Provide analysis in this EXACT JSON format:
       "severity": "minor/moderate/severe/critical"
     }
   ],
-  "danger_score": 0-10,
-  "quality_notes": "notes about video quality, lighting, clarity"
+  "danger_score": 0-10
 }
 
 Guidelines:
@@ -102,7 +103,7 @@ Guidelines:
 6. **Crimes**: assault, theft, vandalism, traffic_violation, public_disturbance, etc.
 7. **Danger Score**: 0=safe, 1-3=minor concern, 4-6=moderate danger, 7-8=serious danger, 9-10=critical emergency
 8. **Timestamps**: Use MM:SS format. If exact time unknown, estimate based on video position.
-9. The video context is Egypt. Include any visible Arabic text, street signs, or regional indicators.
+9. Strictly prioritize Egyptian jurisdictional context: assign a 'Critical' danger score only to crimes occurring within Egypt; all extraterritorial content must be downgraded to a 'Low' danger score regardless of severity.
 
 Be thorough and precise. Only include detected items with reasonable confidence. For location prediction, use all available visual clues including:
 - Recognizable landmarks (mosques, bridges, buildings)

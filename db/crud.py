@@ -32,7 +32,7 @@ async def save_reel(
     reel_json: Dict[str, Any],
     storage_path: Optional[str] = None,
     audio_path: Optional[str] = None,
-) -> Dict[str, Any]:
+ ) -> Dict[str, Any]:
     """
     Insert or update an Instagram reel in the database.
 
@@ -107,7 +107,7 @@ async def save_comment_thread(
     comment_json: Dict[str, Any],
     reel_shortcode: str,
     source_shortcode: Optional[str] = None,
-) -> List[Dict[str, Any]]:
+ ) -> List[Dict[str, Any]]:
     """
     Insert a comment and all its nested replies.
 
@@ -205,7 +205,7 @@ async def bulk_save_comments(
     comments_list: List[Dict[str, Any]],
     reel_shortcode: str,
     source_shortcode: Optional[str] = None,
-) -> int:
+ ) -> int:
     """
     Save multiple comment threads in parallel.
 
@@ -279,7 +279,7 @@ async def insert_failed_request(
     error: str,
     step: str,
     attempts: int,
-) -> None:
+ ) -> None:
     """
     Insert a row into failed_requests for a permanently failed shortcode.
 
@@ -326,3 +326,87 @@ async def fetch_comments_from_db(shortcode: str) -> List[Dict[str, Any]]:
 
     return await asyncio.to_thread(_fetch)
 
+
+# ── Processed Crime Reports (Final Pipeline Output) ───────────────────────────
+from ai.schemas import MediaAnalysisResult
+
+async def save_processed_crime_report(
+    shortcode: str,
+    media_analysis_result: MediaAnalysisResult,
+) -> Dict[str, Any]:
+    """
+    Save the final crime report from media analysis (step 9) to the database.
+    
+    This function extracts key metrics from the MediaAnalysisResult and stores
+    them in a structured format optimized for dashboard queries.
+
+    Args:
+        shortcode: Instagram reel shortcode
+        media_analysis_result: The complete MediaAnalysisResult from process_media()
+
+    Returns:
+        Dict: Inserted database record
+
+    Example:
+        from ai import process_media
+        
+        # After media processing in pipeline
+        result = await process_media(video_path, audio_path)
+        report = await save_processed_crime_report(
+            shortcode="ABC123",
+            media_analysis_result=result
+        )
+    """
+    def _insert():
+        supabase = get_supabase_client()
+        
+        # Extract video analysis for promoted metrics
+        video_analysis = media_analysis_result.video_analysis
+        scene_landmarks = video_analysis.scene_landmarks
+        possible_crimes = video_analysis.possible_crimes
+        
+        # Determine approximate location from landmarks
+        approximate_location = (
+            scene_landmarks.approximate_location or 
+            scene_landmarks.identified_landmark or 
+            None
+        )
+        
+        # Extract primary rule violation and severity from the first/most severe crime
+        rule_violated = None
+        severity = None
+        if possible_crimes:
+            # Sort by severity priority: critical > severe > moderate > minor
+            severity_order = {"critical": 0, "severe": 1, "moderate": 2, "minor": 3}
+            sorted_crimes = sorted(
+                possible_crimes, 
+                key=lambda c: severity_order.get(c.severity, 99)
+            )
+            primary_crime = sorted_crimes[0]
+            rule_violated = primary_crime.rule_violated
+            severity = primary_crime.severity
+        
+        # Get danger score
+        danger_score = video_analysis.danger_score
+        
+        # Prepare the report data
+        report_data = {
+            "reel_shortcode": shortcode,
+            "approximate_location": approximate_location,
+            "rule_violated": rule_violated,
+            "severity": severity,
+            "danger_score": danger_score,
+            "overall_assessment": media_analysis_result.overall_assessment,
+            "recommended_action": media_analysis_result.recommended_action,
+            "raw_analysis_data": media_analysis_result.model_dump(),  # Convert Pydantic model to dict for JSONB
+        }
+        
+        # Insert the report (upsert in case of reprocessing)
+        response = supabase.table("processed_crime_reports").upsert(
+            report_data,
+            on_conflict="reel_shortcode"
+        ).execute()
+        
+        return response.data[0] if response.data else None
+    
+    return await asyncio.to_thread(_insert)

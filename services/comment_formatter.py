@@ -6,7 +6,7 @@ Formats Instagram comments for LLM sentiment analysis.
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
-from db import fetch_comments_from_db
+from db import fetch_comments_from_db, get_reel_by_shortcode
 
 
 def build_comment_tree(comments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -44,15 +44,17 @@ def build_comment_tree(comments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 def format_comment_for_llm_text(
     comments: List[Dict[str, Any]], 
+    caption: Optional[str] = None,
     include_metadata: bool = True,
     include_replies: bool = True,
     max_depth: int = 2
-) -> str:
+  ) -> str:
     """
     Format comments as a readable text string for LLM analysis.
     
     Args:
         comments: List of comment dictionaries (can be nested)
+        caption: Optional reel caption to include at the top
         include_metadata: Include username, likes, timestamp
         include_replies: Include nested replies
         max_depth: Maximum nesting depth to include
@@ -99,23 +101,36 @@ def format_comment_for_llm_text(
         
         return "\n".join(lines)
     
-    if not comments:
-        return "[No comments available]"
+    # Build the output with optional caption at the top
+    output_parts = []
     
-    formatted_comments = [_format_single_comment(comment) for comment in comments]
-    return "\n\n".join(formatted_comments)
+    if caption and caption.strip():
+        output_parts.append(" REEL CAPTION:")
+        output_parts.append(caption.strip())
+        output_parts.append("")  # Empty line separator
+        output_parts.append(" COMMENTS:")
+    
+    if not comments:
+        output_parts.append("[No comments available]")
+    else:
+        formatted_comments = [_format_single_comment(comment) for comment in comments]
+        output_parts.append("\n\n".join(formatted_comments))
+    
+    return "\n".join(output_parts)
 
 
 def format_comment_for_llm_json(
     comments: List[Dict[str, Any]],
+    caption: Optional[str] = None,
     include_replies: bool = True,
     max_depth: int = 2
-) -> Dict[str, Any]:
+ ) -> Dict[str, Any]:
     """
     Format comments as JSON structure for LLM analysis.
     
     Args:
         comments: List of comment dictionaries (can be nested)
+        caption: Optional reel caption to include
         include_replies: Include nested replies
         max_depth: Maximum nesting depth to include
         
@@ -141,10 +156,16 @@ def format_comment_for_llm_json(
         
         return formatted
     
-    return {
+    result = {
         "total_comments": len(comments),
         "comments": [_format_single_comment(comment) for comment in comments]
     }
+    
+    # Add caption if provided
+    if caption and caption.strip():
+        result['caption'] = caption.strip()
+    
+    return result
 
 
 async def get_comments_for_sentiment_analysis(
@@ -156,6 +177,7 @@ async def get_comments_for_sentiment_analysis(
 ) -> str | Dict[str, Any]:
     """
     Main function: Fetch and format comments for LLM sentiment analysis.
+    Automatically includes the reel caption for context.
     
     Args:
         shortcode: Instagram reel shortcode
@@ -178,11 +200,24 @@ async def get_comments_for_sentiment_analysis(
             format_type="json"
         )
     """
-    # Fetch from database
+    # Fetch reel data to get caption
+    reel = await get_reel_by_shortcode(shortcode)
+    caption = reel.get('caption', '') if reel else ''
+    
+    # Fetch comments from database
     flat_comments = await fetch_comments_from_db(shortcode)
     
     if not flat_comments:
-        return "[No comments found]" if format_type == "text" else {"total_comments": 0, "comments": []}
+        if format_type == "text":
+            # Include caption even if no comments
+            if caption and caption.strip():
+                return f" REEL CAPTION:\n{caption.strip()}\n\n💬 COMMENTS:\n[No comments found]"
+            return "[No comments found]"
+        else:
+            result = {"total_comments": 0, "comments": []}
+            if caption and caption.strip():
+                result['caption'] = caption.strip()
+            return result
     
     # Build tree structure
     comment_tree = build_comment_tree(flat_comments)
@@ -191,12 +226,14 @@ async def get_comments_for_sentiment_analysis(
     if format_type == "json":
         return format_comment_for_llm_json(
             comment_tree,
+            caption=caption,
             include_replies=include_replies,
             max_depth=max_depth
         )
     else:
         return format_comment_for_llm_text(
             comment_tree,
+            caption=caption,
             include_metadata=include_metadata,
             include_replies=include_replies,
             max_depth=max_depth
@@ -229,4 +266,5 @@ def extract_comment_texts_only(comments: List[Dict[str, Any]]) -> List[str]:
         _extract_text(comment)
     
     return texts
+
 

@@ -15,6 +15,7 @@ from .crud import (
     update_pipeline_run,
     insert_failed_request,
     fetch_comments_from_db,
+    save_processed_crime_report,
 )
 from .storage_utils import (
     upload_to_supabase,
@@ -39,6 +40,7 @@ __all__ = [
     "update_pipeline_run",
     "insert_failed_request",
     "fetch_comments_from_db",
+    "save_processed_crime_report",
     # Storage
     "upload_to_supabase",
     "upload_large_file",
