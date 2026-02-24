@@ -14,6 +14,7 @@ from typing import Optional
 from .audio_analyzer import AudioAnalyzer
 from .video_analyzer import VideoAnalyzer
 from .schemas import MediaAnalysisResult, AudioAnalysis, VideoAnalysis
+from .report_generator import generate_html_report
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +112,11 @@ class MediaProcessor:
             output_file = output_path / f"media_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
             with open(output_file, 'w', encoding='utf-8') as f:
                 json.dump(result.model_dump(), f, ensure_ascii=False, indent=2)
+
+            # Save HTML report alongside the JSON
+            html_file = output_file.with_suffix(".html")
+            generate_html_report(result, str(html_file))
+            logger.info(f"Report: {html_file}")
             
             elapsed_time = (datetime.now() - start_time).total_seconds()
             

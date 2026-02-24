@@ -254,6 +254,8 @@ async def insert_pipeline_run(shortcode: str) -> int:
             "status": "running",
             "triggered_at": datetime.now(timezone.utc).isoformat(),
         }).execute()
+        if not response.data:
+            raise RuntimeError("insert_pipeline_run: Supabase returned no data after insert")
         return response.data[0]["id"]
 
     return await asyncio.to_thread(_insert)

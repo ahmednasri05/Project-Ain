@@ -6,6 +6,7 @@ Runs the instagram-scraper actor and polls until results are ready.
 import asyncio
 import os
 import json
+import re
 import aiohttp
 from typing import Dict, Any, Optional
 from dotenv import load_dotenv
@@ -30,17 +31,14 @@ ACTOR_ID = "apify~instagram-scraper"
 
 # Polling config
 POLL_INTERVAL_SECONDS = 3
-MAX_WAIT_SECONDS = 120
+MAX_WAIT_SECONDS = 300  # increased for large batches
 
 # Request counter for token rotation (every 5 requests)
 _request_counter = 0
 
 
 def _get_next_token() -> str:
-    """
-    Get the next token in rotation.
-    Rotates to the next token every 5 requests.
-    """
+    """Rotates to the next token every 5 requests."""
     global _request_counter
     token_index = (_request_counter // 5) % len(APIFY_TOKENS)
     _request_counter += 1
@@ -60,23 +58,36 @@ def _shortcode_to_url(shortcode: str) -> str:
     return f"https://www.instagram.com/reel/{shortcode}/"
 
 
-async def _start_actor_run(url: str) -> str:
+def _bare_shortcode(value: str) -> str:
     """
-    Start the Apify instagram-scraper actor run.
+    Extract bare shortcode from either a raw shortcode or a full Instagram URL.
+    e.g. "https://www.instagram.com/reel/DRLS0KOAdv2/" → "DRLS0KOAdv2"
+    e.g. "DRLS0KOAdv2" → "DRLS0KOAdv2"
+    """
+    if value.startswith("http"):
+        match = re.search(r"/(?:reel|p|tv)/([A-Za-z0-9_-]+)", value)
+        if match:
+            return match.group(1)
+    return value
+
+
+async def _start_batch_run(urls: list[str]) -> tuple[str, str]:
+    """
+    Start the Apify instagram-scraper actor with one or more URLs.
 
     Args:
-        url: Full Instagram permalink
+        urls: List of full Instagram permalinks
 
     Returns:
-        run_id: Apify run ID to poll
+        (run_id, token) — token is stored so the same one is used for polling/fetching
     """
     endpoint = f"{APIFY_BASE_URL}/acts/{ACTOR_ID}/runs"
     token = _get_next_token()
     params = {"token": token}
     payload = {
-        "directUrls": [url],
+        "directUrls": urls,
         "resultsType": "posts",
-        "resultsLimit": 12,
+        "resultsLimit": 1,      # 1 result per URL (we target specific posts)
         "includeComments": True,
     }
 
@@ -88,17 +99,13 @@ async def _start_actor_run(url: str) -> str:
 
             data = await response.json()
             run_id = data["data"]["id"]
-            print(f"[Apify] Run started: {run_id}")
-            return run_id
+            print(f"[Apify] Run started: {run_id} ({len(urls)} URL(s))")
+            return run_id, token
 
 
 async def _poll_run(run_id: str, token: str) -> str:
     """
     Poll the run status every POLL_INTERVAL_SECONDS until terminal state.
-
-    Args:
-        run_id: Apify run ID
-        token: The token used to start the run
 
     Returns:
         Final status string: "SUCCEEDED", "FAILED", "ABORTED", "TIMED-OUT"
@@ -129,16 +136,7 @@ async def _poll_run(run_id: str, token: str) -> str:
 
 
 async def _fetch_results(run_id: str, token: str) -> list:
-    """
-    Fetch dataset items from a completed run.
-
-    Args:
-        run_id: Apify run ID
-        token: The token used to start the run
-
-    Returns:
-        List of raw result items from Apify
-    """
+    """Fetch dataset items from a completed run."""
     endpoint = f"{APIFY_BASE_URL}/actor-runs/{run_id}/dataset/items"
     params = {"token": token, "format": "json"}
 
@@ -155,17 +153,13 @@ def _extract_comments(raw: Dict[str, Any]) -> list:
     """
     Extract comments list from raw Apify result.
     Apify returns comments under 'latestComments' (or 'comments' in some actor versions).
-    The structure already matches what save_comment_thread() expects.
     """
     return raw.get("latestComments") or raw.get("comments") or []
 
 
 def _normalize_payload(raw: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Normalize Apify's raw output to the schema expected by save_reel() in db/instagram_db.py.
-
-    Raw Apify field names already match the project's convention so this is mostly
-    a passthrough with safety fallbacks for optional fields.
+    Normalize Apify's raw output to the schema expected by save_reel().
     """
     return {
         "id":               raw.get("id", ""),
@@ -183,83 +177,71 @@ def _normalize_payload(raw: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+async def scrape_reels_batch(shortcodes: list[str]) -> Dict[str, Optional[Dict[str, Any]]]:
+    """
+    Scrape multiple reels in a single Apify actor run.
+
+    Args:
+        shortcodes: List of bare shortcodes (already normalized — no full URLs).
+                    Use _bare_shortcode() to normalize before calling this.
+
+    Returns:
+        Mapping of shortcode -> {"reel": ..., "comments": ...}
+        Value is None for any shortcode that produced no result in the dataset.
+
+    Example:
+        results = await scrape_reels_batch(["DRLS0KOAdv2", "ABC123XYZ"])
+        for sc, data in results.items():
+            if data:
+                print(sc, data["reel"]["ownerUsername"])
+    """
+    if not shortcodes:
+        return {}
+
+    urls = [_shortcode_to_url(sc) for sc in shortcodes]
+    print(f"[Apify] Starting batch run for {len(urls)} URL(s)")
+
+    run_id, token = await _start_batch_run(urls)
+    final_status = await _poll_run(run_id, token)
+
+    if final_status != "SUCCEEDED":
+        raise Exception(f"Apify batch run {run_id} ended with status: {final_status}")
+
+    items = await _fetch_results(run_id, token)
+
+    # Index results by shortCode
+    results_by_sc: Dict[str, Dict] = {}
+    for item in items:
+        sc = item.get("shortCode", "")
+        if sc:
+            reel = _normalize_payload(item)
+            comments = _extract_comments(item)
+            results_by_sc[sc] = {"reel": reel, "comments": comments}
+            print(f"[Apify] ✓ @{reel['ownerUsername']} / {sc} ({len(comments)} comment(s))")
+
+    # Build final mapping — None for any shortcode with no matching result
+    final: Dict[str, Optional[Dict]] = {}
+    for sc in shortcodes:
+        r = results_by_sc.get(sc)
+        if r is None:
+            print(f"[Apify] ✗ No result for: {sc}")
+        final[sc] = r
+
+    return final
+
+
 async def scrape_reel(shortcode: str) -> Optional[Dict[str, Any]]:
     """
-    Main entry point: scrape a single Instagram reel by shortcode or permalink.
-    Starts an Apify actor run, polls until done, and returns normalized payload.
+    Scrape a single Instagram reel by shortcode or permalink.
+    Thin wrapper around scrape_reels_batch kept for backward compatibility.
 
     Args:
         shortcode: Instagram shortcode (e.g. "DRLS0KOAdv2")
                    or full permalink (e.g. "https://www.instagram.com/reel/DRLS0KOAdv2/")
 
     Returns:
-        Dict with keys:
-            "reel":     normalized reel dict ready for save_reel()
-            "comments": list of comment dicts ready for bulk_save_comments()
-        Or None if no results found.
-
-    Example:
-        result = await scrape_reel("DRLS0KOAdv2")
-        print(result["reel"]["videoUrl"])
-        print(len(result["comments"]), "comments")
+        Dict with keys "reel" and "comments", or None if no result found.
     """
-    url = _shortcode_to_url(shortcode)
-    print(f"[Apify] Scraping: {url}")
-
-    # 1. Start actor run (this will rotate the token)
-    run_id = await _start_actor_run(url)
-    
-    # Store the token for this specific run
-    token = APIFY_TOKENS[(_request_counter - 1) // 5 % len(APIFY_TOKENS)]
-
-    # 2. Poll until finished
-    final_status = await _poll_run(run_id, token)
-
-    if final_status != "SUCCEEDED":
-        raise Exception(f"Apify run {run_id} ended with status: {final_status}")
-
-    # 3. Fetch results
-    items = await _fetch_results(run_id, token)
-
-    if not items:
-        print(f"[Apify] No results returned for: {url}")
-        return None
-
-    raw = items[0]
-
-    # 4. Normalize reel and extract comments
-    reel = _normalize_payload(raw)
-    comments = _extract_comments(raw)
-
-    print(f"[Apify] Done → @{reel['ownerUsername']} / {reel['shortCode']} ({len(comments)} comments)")
-    return {"reel": reel, "comments": comments}
-
-
-async def scrape_reels(shortcodes: list[str]) -> list[Dict[str, Any]]:
-    """
-    Scrape multiple reels concurrently.
-
-    Args:
-        shortcodes: List of shortcodes or permalinks
-
-    Returns:
-        List of {"reel": ..., "comments": ...} dicts (failed entries filtered out)
-
-    Example:
-        results = await scrape_reels(["DRLS0KOAdv2", "ABC123XYZ"])
-        for r in results:
-            print(r["reel"]["shortCode"], len(r["comments"]), "comments")
-    """
-    results = await asyncio.gather(
-        *[scrape_reel(sc) for sc in shortcodes],
-        return_exceptions=True
-    )
-
-    payloads = []
-    for shortcode, result in zip(shortcodes, results):
-        if isinstance(result, Exception):
-            print(f"[Apify] Error scraping {shortcode}: {result}")
-        elif result is not None:
-            payloads.append(result)
-
-    return payloads
+    bare = _bare_shortcode(shortcode)
+    results = await scrape_reels_batch([bare])
+    return results.get(bare)

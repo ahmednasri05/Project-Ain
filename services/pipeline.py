@@ -2,7 +2,7 @@
 Main Pipeline
 Orchestrates the full processing flow for Instagram reels:
   0. Shortcode existence check (bail if already in DB)
-  1. Apify scrape (metadata + video URL + comments)
+  1. Apify batch scrape (single actor run for all reels)
   2. Download video
   3. Extract audio
   4. Fingerprint + duplicate check
@@ -11,6 +11,13 @@ Orchestrates the full processing flow for Instagram reels:
   6b. Save fingerprints
   6c. Comment sentiment gate (bail if SPAM_SARCASM)
   7. AI analysis (video + audio in parallel)
+
+Batch flow:
+  - Step 0 runs concurrently for all shortcodes upfront.
+  - Step 1 is a single Apify actor run for all remaining shortcodes.
+    URLs missing from the results are retried as sub-batches (up to MAX_ATTEMPTS times).
+    Retries run concurrently with the processing of URLs that already succeeded.
+  - Steps 2-9 run concurrently, throttled by a shared semaphore (MAX_CONCURRENT_PIPELINES).
 """
 
 import os
@@ -23,9 +30,11 @@ from typing import Optional, Dict, Any
 
 MAX_ATTEMPTS = 3
 
+# Maximum number of reels processed concurrently through steps 2-9.
+# Prevents DNS exhaustion and Instagram CDN rate-limiting.
+MAX_CONCURRENT_PIPELINES = 5
+
 # Exceptions that are transient and worth retrying.
-# Anything not in this tuple is a permanent failure (bad data, auth error, etc.)
-# and will not be retried.
 RETRYABLE_ERRORS = (
     ConnectionError,
     TimeoutError,
@@ -38,7 +47,7 @@ RETRYABLE_ERRORS = (
     aiohttp.ServerTimeoutError,
 )
 
-# Human-readable labels for each internal step number (used in failed_requests)
+# Human-readable labels for each step (used in failed_requests)
 _STEP_LABELS = {
     1: "step_1_apify",
     2: "step_2_download",
@@ -51,7 +60,7 @@ _STEP_LABELS = {
     9: "step_9_ai_analysis",
 }
 
-from util.apify import scrape_reel, scrape_reels
+from util.apify import scrape_reels_batch
 from util.helpers_ytdlp import download_video_ytdlp as download_video, extract_audio
 from db import (
     save_reel, bulk_save_comments, upload_to_supabase, get_storage_bucket,
@@ -89,113 +98,58 @@ def _extract_shortcode(input_str: str) -> str:
     return input_str
 
 
-async def process_single_reel(
+async def _process_reel_from_data(
     shortcode: str,
+    reel_payload: Dict[str, Any],
+    comments: list,
     skip_sentiment: bool = False,
     force: bool = False,
 ) -> Dict[str, Any]:
     """
-    Run the full pipeline for a single Instagram reel.
+    Run steps 2-9 of the pipeline for a reel whose Apify data is already available.
+    Step 0 (existence check) and step 1 (Apify scrape) are handled by run_batch_pipeline.
 
     Args:
-        shortcode:       Instagram shortcode or full permalink
-        skip_sentiment:  If True, bypass the comment sentiment gate (step 8)
-                         and proceed directly to AI analysis. Useful for reels
-                         where comments are absent, irrelevant, or already reviewed.
-        force:           If True, skip the shortcode existence check (step 0) and
-                         the fingerprint duplicate check (step 4), forcing full
-                         reprocessing even if the reel is already in the database.
-                         Does NOT increment mention_count — this is a manual operation.
+        shortcode:      Bare Instagram shortcode (already normalized)
+        reel_payload:   Normalized reel dict from scrape_reels_batch
+        comments:       Comments list from scrape_reels_batch
+        skip_sentiment: If True, bypass the comment sentiment gate (step 8)
+        force:          If True, skip the fingerprint duplicate check (step 4)
 
     Returns:
-        Result dict with keys:
+        Result dict — same shape as process_single_reel:
             status: "success" | "already_processed" | "repost" | "filtered" | "error"
-            shortcode: resolved Instagram shortcode
-            + status-specific fields (see below)
-
-    Success fields:
-        reel_id, danger_score, crimes, sentiment, recommended_action
-
-    Already-processed fields:
-        reel_id (DB id of the existing record)
-
-    Repost fields:
-        original (shortcode of the original), similarity (0.0-1.0),
-        comments_saved (int — new comments saved under the original incident)
-
-    Filtered fields:
-        reel_id, sentiment_label ("SPAM_SARCASM"), sentiment_explanation
-
-    Error fields:
-        reason (error message string)
     """
     print(f"\n{'='*60}")
     print(f"[Pipeline] Processing: {shortcode}")
     print(f"{'='*60}")
 
-    # ── Persistent state (survives across retry iterations) ──────────
-    video_path        = None
-    audio_path        = None
-    reel_payload      = None
-    comments          = None
-    fingerprints      = None
-    reel_record       = None
+    # Resolve shortcode from Apify's response (handles server-side redirects)
+    shortcode = reel_payload.get("shortCode", shortcode)
+
+    video_path         = None
+    audio_path         = None
+    fingerprints       = None
+    reel_record        = None
     video_storage_path = None
     audio_storage_path = None
 
     _result: Dict[str, Any] = {"status": "error", "shortcode": shortcode, "reason": "pipeline did not complete"}
     _run_id:    Optional[int] = None
     _start_time = datetime.now()
-    _attempts   = 0       # total retryable failures across all steps
-    _current_step = 0     # which step to (re-)enter on next loop iteration
+    _attempts   = 0
+    _current_step = 2
+
+    print(f"  ✓ @{reel_payload['ownerUsername']} / {shortcode}")
+    print(f"  ✓ {len(comments)} comment(s) fetched")
 
     try:
-        # ── Step 0: Shortcode check (no retry — fast, non-destructive) ─
-        shortcode = _extract_shortcode(shortcode)
-        _result["shortcode"] = shortcode
         _run_id = await insert_pipeline_run(shortcode)
 
-        print(f"\n[0/7] Checking if already processed...")
-        if force:
-            print(f"  – Skipped (--force flag)")
-        else:
-            existing = await get_reel_by_shortcode(shortcode)
-            if existing:
-                await increment_mention_count(shortcode)
-                print(f"  ⚠ Already processed (DB id: {existing['id']}) — mention_count incremented")
-                _result = {"status": "already_processed", "shortcode": shortcode, "reel_id": existing["id"]}
-                return _result
-            print(f"  ✓ Not seen before, continuing")
-
-        _current_step = 1
-
-        # ── Retry loop ────────────────────────────────────────────────
-        # Each iteration executes exactly one step. On a retryable error
-        # the step number stays the same and the loop retries it.
-        # On success the step advances. Non-retryable errors propagate
-        # immediately to the outer except.
         while True:
-
             try:
-                # ── Step 1: Apify scrape ──────────────────────────────
-                if _current_step == 1:
-                    print("\n[1/7] Scraping with Apify...")
-                    print(f"  → Input shortcode: '{shortcode}'")
-                    result = await scrape_reel(shortcode)
-
-                    if not result:
-                        _result = {"status": "error", "shortcode": shortcode, "reason": "Apify returned no results"}
-                        return _result
-
-                    reel_payload = result["reel"]
-                    comments     = result["comments"]
-                    shortcode    = reel_payload["shortCode"]
-                    print(f"  ✓ @{reel_payload['ownerUsername']} / {shortcode}")
-                    print(f"  ✓ {len(comments)} comment(s) fetched")
-                    _current_step = 2
-
                 # ── Step 2: Download video ────────────────────────────
-                elif _current_step == 2:
+                if _current_step == 2:
                     print("\n[2/7] Downloading video...")
                     if not reel_payload.get("videoUrl"):
                         raise ValueError("No video URL found in reel data.")
@@ -336,7 +290,6 @@ async def process_single_reel(
                     print(f"  ✓ Sentiment    : {sentiment}")
                     print(f"  ✓ Action       : {action}")
 
-                    # Save the processed crime report to the database
                     print(f"  → Saving crime report to database...")
                     crime_report = await save_processed_crime_report(
                         shortcode=shortcode,
@@ -374,40 +327,50 @@ async def process_single_reel(
                 print(f"\n  ↻ {step_label} failed (attempt {_attempts}/{MAX_ATTEMPTS}): {e}")
                 print(f"  → Retrying in {wait}s...")
                 await asyncio.sleep(wait)
-                # _current_step unchanged → same step retried on next iteration
 
     except Exception as e:
         print(f"\n  ✗ Error: {e}")
         import traceback
         traceback.print_exc()
         _result = {"status": "error", "shortcode": shortcode, "reason": str(e)}
+        step_label = _STEP_LABELS.get(_current_step, f"step_{_current_step}")
+        try:
+            await insert_failed_request(shortcode, str(e), step_label, _attempts or 1)
+        except Exception as log_err:
+            print(f"  [logger] failed to write failed_request: {log_err}")
         return _result
 
     finally:
         duration_ms = int((datetime.now() - _start_time).total_seconds() * 1000)
         if _run_id is not None:
-            try:
-                status = _result.get("status", "error")
-                run_update: Dict[str, Any] = {
-                    "status": status,
-                    "completed_at": datetime.now(timezone.utc).isoformat(),
-                    "duration_ms": duration_ms,
-                }
-                if status == "repost":
-                    run_update["original_shortcode"] = _result.get("original")
-                    run_update["similarity"] = _result.get("similarity")
-                elif status == "filtered":
-                    run_update["sentiment_label"] = _result.get("sentiment_label")
-                    run_update["sentiment_explanation"] = _result.get("sentiment_explanation")
-                elif status == "success":
-                    run_update["danger_score"] = _result.get("danger_score")
-                    run_update["crimes_count"] = _result.get("crimes")
-                    run_update["recommended_action"] = _result.get("recommended_action")
-                elif status == "error":
-                    run_update["error_reason"] = _result.get("reason")
-                await update_pipeline_run(_run_id, run_update)
-            except Exception as log_err:
-                print(f"  [logger] failed to update pipeline_runs: {log_err}")
+            status = _result.get("status", "error")
+            run_update: Dict[str, Any] = {
+                "status": status,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "duration_ms": duration_ms,
+            }
+            if status == "repost":
+                run_update["original_shortcode"] = _result.get("original")
+                run_update["similarity"] = _result.get("similarity")
+            elif status == "filtered":
+                run_update["sentiment_label"] = _result.get("sentiment_label")
+                run_update["sentiment_explanation"] = _result.get("sentiment_explanation")
+            elif status == "success":
+                run_update["danger_score"] = _result.get("danger_score")
+                run_update["crimes_count"] = _result.get("crimes")
+                run_update["recommended_action"] = _result.get("recommended_action")
+            elif status == "error":
+                run_update["error_reason"] = _result.get("reason")
+
+            for _attempt in range(3):
+                try:
+                    await update_pipeline_run(_run_id, run_update)
+                    break
+                except Exception as log_err:
+                    if _attempt == 2:
+                        print(f"  [logger] failed to update pipeline_runs after 3 attempts: {log_err}")
+                    else:
+                        await asyncio.sleep(1)
 
         for path in [video_path, audio_path]:
             if path and os.path.exists(path):
@@ -421,6 +384,170 @@ async def process_single_reel(
                             await asyncio.sleep(0.3)
                         else:
                             print(f"  [cleanup] could not remove {os.path.basename(path)} — file still locked")
+
+
+async def run_batch_pipeline(
+    shortcodes: list[str],
+    skip_sentiment: bool = False,
+    force: bool = False,
+) -> list[Dict[str, Any]]:
+    """
+    Full pipeline for one or more Instagram reels.
+
+    Steps 0 and 1 run at the batch level (existence checks and a single Apify actor run).
+    Steps 2-9 run concurrently per reel, throttled by a shared semaphore.
+
+    Any URLs missing from the first Apify result are retried as shrinking sub-batches
+    (up to MAX_ATTEMPTS times) concurrently with the processing of already-succeeded reels.
+
+    Args:
+        shortcodes:     List of shortcodes or permalinks (raw user input)
+        skip_sentiment: If True, bypass the comment sentiment gate for all reels
+        force:          If True, skip existence check and fingerprint duplicate check
+
+    Returns:
+        List of result dicts in the same order as the input shortcodes.
+    """
+    # ── Normalize ──────────────────────────────────────────────────────
+    normalized = [_extract_shortcode(sc) for sc in shortcodes]
+
+    # ── Step 0: Concurrent existence checks ────────────────────────────
+    print(f"\n[0/7] Checking {len(normalized)} shortcode(s) against DB...")
+    if force:
+        existence_results = [None] * len(normalized)
+        print(f"  – Skipped (--force flag)")
+    else:
+        existence_results = await asyncio.gather(
+            *[get_reel_by_shortcode(sc) for sc in normalized]
+        )
+
+    results_map: Dict[str, Dict[str, Any]] = {}
+    to_scrape: list[str] = []
+
+    for sc, existing in zip(normalized, existence_results):
+        if not force and existing:
+            await increment_mention_count(sc)
+            print(f"  ⚠ {sc} — already in DB (id: {existing['id']}) — mention_count incremented")
+            results_map[sc] = {"status": "already_processed", "shortcode": sc, "reel_id": existing["id"]}
+        else:
+            to_scrape.append(sc)
+
+    already_done = len(normalized) - len(to_scrape)
+    if already_done:
+        print(f"  → {already_done} skipped, {len(to_scrape)} new")
+
+    if not to_scrape:
+        return [results_map[sc] for sc in normalized]
+
+    # ── Shared semaphore for steps 2-9 ─────────────────────────────────
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_PIPELINES)
+    process_tasks: list[asyncio.Task] = []
+
+    async def _launch(sc: str, apify_result: Dict[str, Any]) -> None:
+        async with semaphore:
+            result = await _process_reel_from_data(
+                sc,
+                apify_result["reel"],
+                apify_result["comments"],
+                skip_sentiment=skip_sentiment,
+                force=force,
+            )
+        results_map[sc] = result
+
+    # ── Step 1: First Apify batch run ───────────────────────────────────
+    print(f"\n[1/7] Apify batch run for {len(to_scrape)} reel(s)...")
+    try:
+        first_batch = await scrape_reels_batch(to_scrape)
+    except Exception as e:
+        print(f"  ✗ Apify batch run failed entirely: {e}")
+        for sc in to_scrape:
+            results_map[sc] = {"status": "error", "shortcode": sc, "reason": f"Apify batch run failed: {e}"}
+            try:
+                await insert_failed_request(sc, str(e), "step_1_apify", 1)
+            except Exception:
+                pass
+        return [results_map.get(sc, {"status": "error", "shortcode": sc, "reason": "unknown"}) for sc in normalized]
+
+    first_succeeded = {sc: r for sc, r in first_batch.items() if r is not None}
+    first_failed    = [sc for sc in to_scrape if first_batch.get(sc) is None]
+
+    print(f"  → {len(first_succeeded)} succeeded, {len(first_failed)} missing")
+
+    # Launch processing for successes immediately
+    for sc, r in first_succeeded.items():
+        process_tasks.append(asyncio.create_task(_launch(sc, r)))
+
+    # ── Apify retry loop (runs concurrently with step 2-9 processing) ───
+    async def _retry_apify(failed: list[str]) -> None:
+        remaining = list(failed)
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            if not remaining:
+                return
+            wait = 2 ** attempt
+            print(f"\n[Pipeline] Retrying {len(remaining)} Apify URL(s) in {wait}s (attempt {attempt}/{MAX_ATTEMPTS})...")
+            await asyncio.sleep(wait)
+
+            try:
+                retry_batch = await scrape_reels_batch(remaining)
+            except Exception as e:
+                print(f"[Pipeline] Apify retry run failed: {e} — will try again")
+                continue
+
+            new_remaining = []
+            for sc in remaining:
+                r = retry_batch.get(sc)
+                if r is not None:
+                    process_tasks.append(asyncio.create_task(_launch(sc, r)))
+                else:
+                    new_remaining.append(sc)
+            remaining = new_remaining
+
+        # Permanently failed
+        for sc in remaining:
+            print(f"[Pipeline] ✗ {sc} — no Apify result after {MAX_ATTEMPTS} attempts → failed_requests")
+            results_map[sc] = {
+                "status": "error",
+                "shortcode": sc,
+                "reason": f"Apify returned no results after {MAX_ATTEMPTS} attempts",
+            }
+            try:
+                await insert_failed_request(sc, "Apify returned no results", "step_1_apify", MAX_ATTEMPTS)
+            except Exception as log_err:
+                print(f"  [logger] failed to write failed_request for {sc}: {log_err}")
+
+    if first_failed:
+        retry_task = asyncio.create_task(_retry_apify(first_failed))
+        # Awaiting this lets the event loop run the already-created process_tasks concurrently
+        await retry_task
+
+    # ── Wait for all processing tasks (initial + those added by retry) ──
+    if process_tasks:
+        await asyncio.gather(*process_tasks, return_exceptions=True)
+
+    return [results_map.get(sc, {"status": "error", "shortcode": sc, "reason": "unknown"}) for sc in normalized]
+
+
+async def process_single_reel(
+    shortcode: str,
+    skip_sentiment: bool = False,
+    force: bool = False,
+) -> Dict[str, Any]:
+    """
+    Run the full pipeline for a single Instagram reel.
+    Delegates to run_batch_pipeline.
+
+    Args:
+        shortcode:       Instagram shortcode or full permalink
+        skip_sentiment:  If True, bypass the comment sentiment gate
+        force:           If True, skip existence check and fingerprint duplicate check
+
+    Returns:
+        Result dict with keys:
+            status: "success" | "already_processed" | "repost" | "filtered" | "error"
+            shortcode, + status-specific fields
+    """
+    results = await run_batch_pipeline([shortcode], skip_sentiment=skip_sentiment, force=force)
+    return results[0] if results else {"status": "error", "shortcode": shortcode, "reason": "no result"}
 
 
 def _print_summary(shortcodes: list, results: list) -> None:
@@ -455,7 +582,7 @@ def _print_summary(shortcodes: list, results: list) -> None:
 async def run_pipeline() -> None:
     """
     Interactive entry point.
-    Prompts for one or more shortcodes/permalinks, processes them concurrently,
+    Prompts for one or more shortcodes/permalinks, processes them via run_batch_pipeline,
     then loops for the next batch.
 
     Usage:
@@ -489,7 +616,6 @@ async def run_pipeline() -> None:
             print("Exiting pipeline.")
             break
 
-        # Parse flags from the input line
         skip_sentiment = "--skip-sentiment" in user_input
         force          = "--force" in user_input
 
@@ -504,14 +630,8 @@ async def run_pipeline() -> None:
 
         shortcodes = [s.strip() for s in user_input.split(",") if s.strip()]
 
-        if len(shortcodes) == 1:
-            results = [await process_single_reel(shortcodes[0], skip_sentiment=skip_sentiment, force=force)]
-        else:
-            print(f"\n[Pipeline] Running {len(shortcodes)} reels concurrently...\n")
-            raw_results = await asyncio.gather(
-                *[process_single_reel(sc, skip_sentiment=skip_sentiment, force=force) for sc in shortcodes],
-                return_exceptions=True,
-            )
-            results = list(raw_results)
+        if len(shortcodes) > 1:
+            print(f"\n[Pipeline] Running {len(shortcodes)} reels (max {MAX_CONCURRENT_PIPELINES} processing at a time)...\n")
 
+        results = await run_batch_pipeline(shortcodes, skip_sentiment=skip_sentiment, force=force)
         _print_summary(shortcodes, results)
