@@ -5,6 +5,7 @@ Models module for crime monitoring AI.
 from .audio_analyzer import AudioAnalyzer, analyze_audio
 from .video_analyzer import VideoAnalyzer, analyze_video
 from .media_processor import MediaProcessor, process_media
+from .embedding import embed_texts
 from .schemas import (
     AudioAnalysis,
     AudioEvent,
@@ -17,6 +18,7 @@ from .schemas import (
     LicensePlate,
     MediaAnalysisResult
 )
+
 
 __all__ = [
     # Analyzers
@@ -38,5 +40,6 @@ __all__ = [
     'Vehicle',
     'LicensePlate',
     'MediaAnalysisResult',
+    'embed_texts',
 ]
 
