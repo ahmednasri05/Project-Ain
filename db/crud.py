@@ -388,9 +388,11 @@ async def save_processed_crime_report(
             rule_violated = primary_crime.rule_violated
             severity = primary_crime.severity
         
-        # Get danger score
+        # Get danger score, legal classification, and jurisdiction
         danger_score = video_analysis.danger_score
-        
+        crime_classification = video_analysis.crime_classification
+        in_egypt = video_analysis.in_egypt
+
         # Prepare the report data
         report_data = {
             "reel_shortcode": shortcode,
@@ -398,6 +400,8 @@ async def save_processed_crime_report(
             "rule_violated": rule_violated,
             "severity": severity,
             "danger_score": danger_score,
+            "crime_classification": crime_classification,
+            "in_egypt": in_egypt,
             "overall_assessment": media_analysis_result.overall_assessment,
             "recommended_action": media_analysis_result.recommended_action,
             "raw_analysis_data": media_analysis_result.model_dump(),  # Convert Pydantic model to dict for JSONB

@@ -13,8 +13,23 @@ from typing import Optional
 
 from .audio_analyzer import AudioAnalyzer
 from .video_analyzer import VideoAnalyzer
-from .schemas import MediaAnalysisResult, AudioAnalysis, VideoAnalysis
+from .schemas import MediaAnalysisResult, AudioAnalysis, VideoAnalysis, PenalCodeArticle
 from .report_generator import generate_html_report
+
+try:
+    from db.client import SUPABASE_URL, get_storage_bucket as _get_storage_bucket
+    _SUPABASE_AVAILABLE = True
+except ImportError:
+    _SUPABASE_AVAILABLE = False
+
+
+def _supabase_video_url(video_path: str) -> Optional[str]:
+    """Return the Supabase Storage public URL for a video, or None if unavailable."""
+    if not _SUPABASE_AVAILABLE:
+        return None
+    shortcode = Path(video_path).stem
+    bucket = _get_storage_bucket()
+    return f"{SUPABASE_URL}/storage/v1/object/public/{bucket}/videos/{shortcode}.mp4"
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +107,12 @@ class MediaProcessor:
                 video_task
             )
             
+            # Enrich detected crimes with matched penal code articles
+            if video_analysis.possible_crimes:
+                await self._search_penal_code_for_crimes(
+                    video_analysis.possible_crimes, video_path
+                )
+
             # Generate overall assessment
             logger.info("Generating combined assessment...")
             overall_assessment = await self._generate_assessment(
@@ -115,7 +136,7 @@ class MediaProcessor:
 
             # Save HTML report alongside the JSON
             html_file = output_file.with_suffix(".html")
-            generate_html_report(result, str(html_file))
+            generate_html_report(result, str(html_file), video_url=_supabase_video_url(video_path))
             logger.info(f"Report: {html_file}")
             
             elapsed_time = (datetime.now() - start_time).total_seconds()
@@ -184,6 +205,91 @@ class MediaProcessor:
             logger.error(f"Video analysis failed: {str(e)}")
             raise  # Video analysis is critical, so we raise
     
+    async def _search_penal_code_for_crimes(
+        self,
+        crimes: list,
+        video_path: str,
+    ) -> None:
+        """
+        Enrich each PossibleCrime with matched penal code articles (best-effort).
+
+        Runs a semantic search for every detected crime using its penal_code_query
+        (formal legal Arabic) when available, falling back to rule_violated + content.
+        Retries up to 3 times per crime; on permanent
+        failure inserts a row into failed_requests and moves on — the pipeline
+        is never blocked.
+
+        Args:
+            crimes:     List of PossibleCrime objects to enrich in-place.
+            video_path: Used to derive the shortcode for failed_requests logging.
+        """
+        # Lazy imports to avoid circular dependencies and to keep the AI package
+        # decoupled from the DB package at import time.
+        from db.penal_code_search import search_penal_code
+        from db.crud import insert_failed_request
+
+        MAX_ATTEMPTS = 3
+        RETRY_SLEEP  = 2   # seconds between retries
+        LIMIT        = 2
+        THRESHOLD    = 0.4
+        shortcode    = Path(video_path).stem
+
+        logger.info(f"Searching penal code for {len(crimes)} crime(s)...")
+
+        for crime in crimes:
+            # Prefer the dedicated legal-language query field; fall back to the
+            # short label + content if Gemini didn't populate it.
+            query      = crime.penal_code_query or f"{crime.rule_violated}: {crime.content}"
+            last_error = None
+
+            for attempt in range(1, MAX_ATTEMPTS + 1):
+                try:
+                    raw = await asyncio.to_thread(
+                        search_penal_code,
+                        query,
+                        LIMIT,
+                        THRESHOLD,
+                    )
+                    crime.matched_articles = [
+                        PenalCodeArticle(
+                            article_number=a["article_number"],
+                            chapter_title=a["chapter_title"],
+                            article_text=a["article_text"],
+                            similarity=a["similarity"],
+                        )
+                        for a in raw
+                    ]
+                    logger.info(
+                        f"  ✓ '{crime.rule_violated}' → "
+                        f"{len(crime.matched_articles)} article(s) matched"
+                    )
+                    last_error = None
+                    break
+
+                except Exception as exc:
+                    last_error = str(exc)
+                    logger.warning(
+                        f"  Penal code search attempt {attempt}/{MAX_ATTEMPTS} "
+                        f"failed for '{crime.rule_violated}': {exc}"
+                    )
+                    if attempt < MAX_ATTEMPTS:
+                        await asyncio.sleep(RETRY_SLEEP)
+
+            if last_error:
+                logger.error(
+                    f"  Penal code search permanently failed for "
+                    f"'{crime.rule_violated}' after {MAX_ATTEMPTS} attempts."
+                )
+                try:
+                    await insert_failed_request(
+                        shortcode=shortcode,
+                        error=f"[penal_code_search] {crime.rule_violated}: {last_error}",
+                        step="penal_code_search",
+                        attempts=MAX_ATTEMPTS,
+                    )
+                except Exception as db_exc:
+                    logger.warning(f"  Could not write to failed_requests: {db_exc}")
+
     async def _generate_assessment(
         self,
         video_analysis: VideoAnalysis,
@@ -230,12 +336,14 @@ Provide a 2-3 sentence assessment that summarizes:
 1. What is happening
 2. The level of danger/concern
 3. Key evidence from both video and audio
-4. Location context if available"""
+4. Location context if available
+
+Write your entire response in Arabic."""
 
             response = await client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "You are a crime analysis expert. Provide clear, concise assessments."},
+                    {"role": "system", "content": "You are a crime analysis expert. Provide clear, concise assessments in Arabic."},
                     {"role": "user", "content": assessment_prompt}
                 ],
                 temperature=0.3,

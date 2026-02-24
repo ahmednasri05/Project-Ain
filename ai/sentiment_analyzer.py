@@ -27,6 +27,7 @@ class SentimentAnalyzer:
                     "\n- AMBIGUOUS: The comments could not be confidently placed in either category or is unclear."
                     "\n\nRespond ONLY with a valid JSON object exactly in this format:"
                     "\n{\"label\": \"CRIME_REPORT\"|\"SPAM_SARCASM\"|\"AMBIGUOUS\", \"explanation\": \"A SHORT explanation for your choice.\"}"
+                    "\n\nIMPORTANT: The label field must be exactly one of: CRIME_REPORT, SPAM_SARCASM, AMBIGUOUS (English, unchanged). The explanation field must be written in Arabic."
                 )},
                 {"role": "user", "content": text}
             ],

@@ -9,6 +9,7 @@ notebooks/.ipynb_checkpoints/
 # Debug artifacts
 apify_debug_*.json
 downloads/
+webhookpayloads/
 
 # Data and output files
 data/

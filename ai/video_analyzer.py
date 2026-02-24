@@ -87,11 +87,14 @@ Provide analysis in this EXACT JSON format:
     {
       "content": "description of crime",
       "timestamp": "MM:SS",
-      "rule_violated": "crime type/law violated",
-      "severity": "minor/moderate/severe/critical"
+      "rule_violated": "short crime label",
+      "severity": "minor/moderate/severe/critical",
+      "penal_code_query": "formal Egyptian Penal Code characterisation for semantic search"
     }
   ],
-  "danger_score": 0-10
+  "danger_score": 0-10,
+  "crime_classification": "جناية" | "جنحة" | "مخالفة" | "لا شيء",
+  "in_egypt": "نعم" | "لا" | "غير محدد"
 }
 
 Guidelines:
@@ -100,10 +103,21 @@ Guidelines:
 3. **License Plates**: Try to read any visible license plates. For Arabic plates, transcribe as-is.
 4. **Landmarks**: Identify any recognizable locations, buildings, bridges, signs, streets.
 5. **Approximate Location**: Based on landmarks, signs, architecture, license plates, and any visible text, predict the most specific location possible. Format: "City, District, Street" or "City, Area description". Include Egyptian governorate if identifiable. Be as detailed and accurate as possible.
-6. **Crimes**: assault, theft, vandalism, traffic_violation, public_disturbance, etc.
-7. **Danger Score**: 0=safe, 1-3=minor concern, 4-6=moderate danger, 7-8=serious danger, 9-10=critical emergency
+6. **Crimes** — two separate fields per crime:
+   - `rule_violated`: a short Arabic display label, e.g. "ضرب وجرح بسلاح", "سرقة بالإكراه", "إتلاف ممتلكات".
+   - `penal_code_query`: 1–3 sentences in formal legal Arabic characterising the offense for semantic search against قانون العقوبات المصري. Include: the precise legal act (e.g. إيذاء جسدي عمد، سرقة بالتهديد), any aggravating circumstances visible (استخدام سلاح، تعدد الجناة، الليل), the punishment tier implied (جناية/جنحة/مخالفة), and any relevant legal concepts (إكراه، عاهة مستديمة، تلبّس). Example: "إيذاء جسدي عمدي بالضرب باستخدام آلة حادة أفضى إلى جرح — جريمة ضرب وجرح وفقاً لأحكام قانون العقوبات المصري، مع توافر ظرف مشدد لاستخدام سلاح."
+7. **Danger Score**: 0=safe, 1-3=violation, 4-6=misdemeanor, 7-10=felony. Align with crime_classification below.
 8. **Timestamps**: Use MM:SS format. If exact time unknown, estimate based on video position.
-9. Strictly prioritize Egyptian jurisdictional context: assign a 'Critical' danger score only to crimes occurring within Egypt; all extraterritorial content must be downgraded to a 'Low' danger score regardless of severity.
+9. **Location**: Set "in_egypt" to exactly one of these three values based on visual evidence (landmarks, license plates, signage, architecture, language of text visible in video):
+    - "نعم"       → clear evidence the crime takes place in Egypt.
+    - "لا"        → clear evidence the crime takes place outside Egypt.
+    - "غير محدد"  → insufficient visual evidence to determine location. Use this when unsure — do NOT guess.
+    Score and classification always reflect the crime's true severity regardless of location.
+10. **Crime Classification** (Egyptian Penal Code): Choose exactly one:
+    - "جناية"  → felony: punishable by imprisonment ≥ 3 years or death (e.g. murder, armed assault, rape, armed robbery). Danger score 7-10.
+    - "جنحة"   → misdemeanor: punishable by imprisonment < 3 years or fine (e.g. assault, theft, vandalism, public disturbance). Danger score 4-6.
+    - "مخالفة" → violation: minor infraction punishable by fine only (e.g. traffic violation, littering, noise). Danger score 1-3.
+    - "لا شيء" → no crime detected. Danger score 0.
 
 Be thorough and precise. Only include detected items with reasonable confidence. For location prediction, use all available visual clues including:
 - Recognizable landmarks (mosques, bridges, buildings)
@@ -111,6 +125,8 @@ Be thorough and precise. Only include detected items with reasonable confidence.
 - License plate patterns (Egyptian governorate codes)
 - Architectural style (modern Cairo, old district, coastal, etc.)
 - Environmental features (Nile river, desert, urban density)
+
+LANGUAGE REQUIREMENT: Write ALL text values in Arabic (Modern Standard Arabic / Egyptian Arabic). This includes: description, weapon descriptions, other_objects items, identified_landmark, architectural_style, approximate_location, location_hints items, crime content, rule_violated, penal_code_query, and quality_notes. EXCEPTION: Keep severity values strictly as one of these English words: minor / moderate / severe / critical. Keep timestamp format as MM:SS.
 """
             # Run analysis in thread pool since genai client is sync
             loop = asyncio.get_event_loop()
@@ -188,6 +204,8 @@ Be thorough and precise. Only include detected items with reasonable confidence.
                 scene_landmarks=scene_landmarks,
                 possible_crimes=possible_crimes,
                 danger_score=analysis_data.get("danger_score", 5),
+                crime_classification=analysis_data.get("crime_classification"),
+                in_egypt=analysis_data.get("in_egypt", "غير محدد"),
                 quality_notes=analysis_data.get("quality_notes")
             )
             

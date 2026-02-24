@@ -65,12 +65,28 @@ class SceneLandmarks(BaseModel):
     location_hints: List[str] = Field(default_factory=list, description="Other location clues")
 
 
+class PenalCodeArticle(BaseModel):
+    """A penal code article matched to a detected crime via semantic search."""
+    article_number: str = Field(..., description="Article number, e.g. '86'")
+    chapter_title: str = Field(..., description="Chapter the article belongs to")
+    article_text: str = Field(..., description="Full text of the article")
+    similarity: float = Field(..., description="Cosine similarity score (0–1)")
+
+
 class PossibleCrime(BaseModel):
     """Detected possible crime."""
     content: str = Field(..., description="Description of the crime")
     timestamp: str = Field(..., description="Timestamp in format MM:SS")
-    rule_violated: str = Field(..., description="Legal rule or crime type")
+    rule_violated: str = Field(..., description="Short display label for the crime type")
     severity: str = Field(..., description="Severity level (minor, moderate, severe, critical)")
+    penal_code_query: Optional[str] = Field(
+        None,
+        description="Formal Egyptian Penal Code characterisation used as semantic search query",
+    )
+    matched_articles: List[PenalCodeArticle] = Field(
+        default_factory=list,
+        description="Penal code articles matched to this crime via semantic search",
+    )
 
 
 class VideoAnalysis(BaseModel):
@@ -80,6 +96,8 @@ class VideoAnalysis(BaseModel):
     scene_landmarks: SceneLandmarks = Field(default_factory=SceneLandmarks)
     possible_crimes: List[PossibleCrime] = Field(default_factory=list)
     danger_score: int = Field(..., ge=0, le=10, description="Overall danger score (0-10)")
+    crime_classification: Optional[str] = Field(None, description="Egyptian law classification: جناية / جنحة / مخالفة / لا شيء")
+    in_egypt: str = Field(default="غير محدد", description="Whether crime is in Egypt: نعم / لا / غير محدد")
     quality_notes: Optional[str] = Field(None, description="Notes about video quality")
 
 

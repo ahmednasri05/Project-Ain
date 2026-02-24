@@ -118,14 +118,16 @@ Audio events to detect:
 Sentiment categories:
 - Distress/Aggression, Panic/Fear, Anger, Calm, Neutral, Confusion
 
-Only include events that are clearly audible. Be precise with timestamps."""
+Only include events that are clearly audible. Be precise with timestamps.
+
+LANGUAGE REQUIREMENT: Write ALL text values in Arabic. This includes the "event" field (audio event names) and the "sentiment" field. EXCEPTION: Keep intensity values strictly as one of these English words: low / medium / high."""
 
             response = await self.client.chat.completions.create(
                 model="gpt-4o",
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are an expert audio forensic analyst. Analyze audio transcripts to detect events, sentiment, and important details. Always respond with valid JSON only."
+                        "content": "You are an expert audio forensic analyst. Analyze audio transcripts to detect events, sentiment, and important details. Always respond with valid JSON only. Write all descriptive text values in Arabic."
                     },
                     {
                         "role": "user",

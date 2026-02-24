@@ -16,6 +16,31 @@ _SEVERITY_COLORS = {
     "critical": ("#4c0519", "#fecdd3", "#e11d48"),
 }
 
+# Arabic display labels (severity and intensity values stay English in JSON for CSS/logic)
+_SEVERITY_LABELS_AR = {
+    "minor":    "بسيط",
+    "moderate": "متوسط",
+    "severe":   "شديد",
+    "critical": "حرج",
+}
+_INTENSITY_LABELS_AR = {
+    "low":    "منخفض",
+    "medium": "متوسط",
+    "high":   "مرتفع",
+}
+
+# Egyptian law classification colours  (fg, bg)
+_CLASSIFICATION_COLORS = {
+    "جناية":  ("#dc2626", "#fef2f2"),
+    "جنحة":   ("#ea580c", "#fff7ed"),
+    "مخالفة": ("#ca8a04", "#fef9c3"),
+    "لا شيء": ("#94a3b8", "#f1f5f9"),
+}
+
+
+def _classification_color(classification: Optional[str]):
+    return _CLASSIFICATION_COLORS.get(classification or "لا شيء", ("#94a3b8", "#f1f5f9"))
+
 _DANGER_COLORS = {
     (0, 3):  ("#16a34a", "#dcfce7"),   # fg, bg  — low
     (4, 5):  ("#ca8a04", "#fef9c3"),   # medium-low
@@ -82,54 +107,112 @@ def _badge(text: str, fg: str, bg: str, extra_style: str = "") -> str:
 
 # ── Section builders ──────────────────────────────────────────────────────────
 
-def _build_danger_section(score: int) -> str:
-    fg, bg = _danger_color(score)
-    label = (
-        "Low" if score <= 3
-        else "Medium" if score <= 5
-        else "High" if score <= 7
-        else "Critical"
-    )
-    pct = score * 10
+def _build_danger_section(score: int, classification: Optional[str] = None, in_egypt: str = "غير محدد") -> str:
+    label = classification or "لا شيء"
+
+    if in_egypt == "نعم":
+        fg, bg = _classification_color(classification)
+        bar_fill = f'<div class="danger-bar-fill" style="width:{score * 10}%;background:{fg}"></div>'
+        score_style = f"color:{fg};background:{bg}"
+        border_style = f"border-right:6px solid {fg}"
+        bar_opacity = ""
+        jurisdiction_banner = ""
+        classification_html = f'التصنيف القانوني: <span style="color:{fg}">{_e(label)}</span>'
+
+    elif in_egypt == "لا":
+        fg, bg = "#94a3b8", "#f1f5f9"
+        bar_fill = ""
+        score_style = "color:#94a3b8;background:#f1f5f9"
+        border_style = "border-right:6px solid #94a3b8"
+        bar_opacity = ""
+        jurisdiction_banner = """
+      <div class="jurisdiction-banner jurisdiction-outside">
+        <span class="jurisdiction-icon">⚠️</span>
+        الجريمة خارج نطاق الاختصاص المصري — درجة الخطورة غير مفعّلة
+      </div>"""
+        classification_html = f'التصنيف القانوني: <span style="color:#94a3b8">{_e(label)}</span>'
+
+    else:  # "غير محدد"
+        fg, bg = _classification_color(classification)
+        bar_fill = f'<div class="danger-bar-fill" style="width:{score * 10}%;background:{fg}"></div>'
+        score_style = f"color:{fg};background:{bg}"
+        border_style = f"border-right:6px solid {fg}"
+        bar_opacity = "opacity:0.45;"
+        jurisdiction_banner = """
+      <div class="jurisdiction-banner jurisdiction-unknown">
+        <span class="jurisdiction-icon">ℹ️</span>
+        موقع الجريمة غير محدد — يُعرض التقييم للاستئناس فقط
+      </div>"""
+        classification_html = f'التصنيف القانوني: <span style="color:{fg}">{_e(label)}</span>'
+
     return f"""
-    <section class="card danger-card" style="border-left:6px solid {fg}">
+    <section class="card danger-card" style="{border_style}">
+      {jurisdiction_banner}
       <div class="danger-inner">
         <div>
-          <div class="danger-score" style="color:{fg};background:{bg}">{score}<span class="danger-denom">/10</span></div>
-          <div class="danger-label">{_e(label)} Threat Level</div>
+          <div class="danger-score" style="{score_style}">{score}<span class="danger-denom">/10</span></div>
+          <div class="danger-label">{classification_html}</div>
         </div>
-        <div class="danger-bar-wrap">
-          <div class="danger-bar-track">
-            <div class="danger-bar-fill" style="width:{pct}%;background:{fg}"></div>
+        <div class="danger-bar-wrap" style="{bar_opacity}">
+          <div class="danger-bar-track" dir="ltr">
+            {bar_fill}
           </div>
-          <div class="danger-bar-labels">
-            <span>0</span><span>5</span><span>10</span>
+          <div class="danger-bar-ranges" dir="ltr">
+            <div class="range-segment" style="width:10%;background:#f1f5f9;color:#94a3b8">لا شيء<span class="range-nums">0</span></div>
+            <div class="range-segment" style="width:30%;background:#fef9c3;color:#854d0e">مخالفة<span class="range-nums">1–3</span></div>
+            <div class="range-segment" style="width:30%;background:#fed7aa;color:#c2410c">جنحة<span class="range-nums">4–6</span></div>
+            <div class="range-segment" style="width:30%;background:#fecdd3;color:#be123c">جناية<span class="range-nums">7–10</span></div>
           </div>
         </div>
       </div>
     </section>"""
 
 
+def _build_matched_articles(articles) -> str:
+    """Render penal code articles matched to a single crime."""
+    if not articles:
+        return ""
+    items = []
+    for a in articles:
+        sim_pct = f"{a.similarity:.0%}"
+        items.append(f"""
+        <div class="penal-article-item">
+          <div class="penal-article-meta">
+            <span class="penal-article-num">المادة {_e(a.article_number)}</span>
+            <span class="penal-chapter">{_e(a.chapter_title)}</span>
+            <span class="penal-sim">{sim_pct} تطابق</span>
+          </div>
+          <p class="penal-article-text" dir="rtl">{_e(a.article_text)}</p>
+        </div>""")
+    return f"""
+      <div class="penal-articles">
+        <div class="penal-articles-title">المواد القانونية ذات الصلة</div>
+        {"".join(items)}
+      </div>"""
+
+
 def _build_crimes_section(crimes) -> str:
     if not crimes:
-        return _section("Detected Crimes", "⚖️", '<p class="muted">No crimes detected.</p>')
+        return _section("الجرائم المرصودة", "⚖️", '<p class="muted">لم يُرصد أي جرائم.</p>')
 
     cards = []
     for crime in crimes:
         sev = crime.severity or "unknown"
         sev_style = _severity_style(sev)
-        rule = crime.rule_violated.replace("_", " ").title()
+        sev_label = _SEVERITY_LABELS_AR.get(sev.lower(), sev)
+        articles_html = _build_matched_articles(getattr(crime, "matched_articles", []))
         cards.append(f"""
         <div class="crime-card">
           <div class="crime-header">
-            <span class="crime-rule">{_e(rule)}</span>
-            <span class="crime-badge" style="{sev_style}">{_e(sev.upper())}</span>
+            <span class="crime-rule">{_e(crime.rule_violated)}</span>
+            <span class="crime-badge" style="{sev_style}">{_e(sev_label)}</span>
             <span class="crime-ts">@ {_e(crime.timestamp)}</span>
           </div>
           <p class="crime-content">{_e(crime.content)}</p>
+          {articles_html}
         </div>""")
 
-    return _section("Detected Crimes", "⚖️", "\n".join(cards))
+    return _section("الجرائم المرصودة", "⚖️", "\n".join(cards))
 
 
 def _build_entities_section(entities) -> str:
@@ -139,7 +222,7 @@ def _build_entities_section(entities) -> str:
     rows.append(f"""
     <div class="entity-row">
       <span class="entity-icon">👥</span>
-      <span class="entity-label">People detected</span>
+      <span class="entity-label">أشخاص مرصودون</span>
       <span class="entity-value">{entities.people_count}</span>
     </div>""")
 
@@ -150,15 +233,15 @@ def _build_entities_section(entities) -> str:
             rows.append(f"""
     <div class="entity-row entity-alert">
       <span class="entity-icon">🔫</span>
-      <span class="entity-label">Weapon @ {_e(w.timestamp)}</span>
-      <span class="entity-value">{_e(w.type)}{_e(desc)} ({w.confidence:.0%} confidence)</span>
+      <span class="entity-label">سلاح @ {_e(w.timestamp)}</span>
+      <span class="entity-value">{_e(w.type)}{_e(desc)} ({w.confidence:.0%} ثقة)</span>
     </div>""")
     else:
         rows.append("""
     <div class="entity-row">
       <span class="entity-icon">🔫</span>
-      <span class="entity-label">Weapons</span>
-      <span class="entity-value muted">None detected</span>
+      <span class="entity-label">أسلحة</span>
+      <span class="entity-value muted">لم يُرصد</span>
     </div>""")
 
     # Vehicles
@@ -166,22 +249,22 @@ def _build_entities_section(entities) -> str:
         for v in entities.vehicles:
             plate_text = ""
             if v.license_plate and v.license_plate.raw_text:
-                plate_text = f" | Plate: {v.license_plate.raw_text}"
+                plate_text = f" | لوحة: {v.license_plate.raw_text}"
                 if v.license_plate.governorate_guess:
                     plate_text += f" ({v.license_plate.governorate_guess})"
             ts = f" @ {v.timestamp}" if v.timestamp else ""
             rows.append(f"""
     <div class="entity-row">
       <span class="entity-icon">🚗</span>
-      <span class="entity-label">{_e(v.type.title())} ({_e(v.color)}){ts}</span>
-      <span class="entity-value">{_e(plate_text) if plate_text else '<span class="muted">No plate</span>'}</span>
+      <span class="entity-label">{_e(v.type)} ({_e(v.color)}){ts}</span>
+      <span class="entity-value">{_e(plate_text) if plate_text else '<span class="muted">لا لوحة</span>'}</span>
     </div>""")
     else:
         rows.append("""
     <div class="entity-row">
       <span class="entity-icon">🚗</span>
-      <span class="entity-label">Vehicles</span>
-      <span class="entity-value muted">None detected</span>
+      <span class="entity-label">مركبات</span>
+      <span class="entity-value muted">لم يُرصد</span>
     </div>""")
 
     # Other objects
@@ -189,30 +272,30 @@ def _build_entities_section(entities) -> str:
         rows.append(f"""
     <div class="entity-row">
       <span class="entity-icon">📦</span>
-      <span class="entity-label">Other objects</span>
+      <span class="entity-label">أشياء أخرى</span>
       <span class="entity-value">{_e(", ".join(entities.other_objects))}</span>
     </div>""")
 
-    return _section("Detected Entities", "🔍", '<div class="entity-list">' + "\n".join(rows) + "</div>")
+    return _section("الكيانات المرصودة", "🔍", '<div class="entity-list">' + "\n".join(rows) + "</div>")
 
 
 def _build_scene_section(scene) -> str:
     rows = []
     if scene.identified_landmark:
-        rows.append(f'<div class="scene-row"><span class="scene-key">Landmark</span><span>{_e(scene.identified_landmark)}</span></div>')
+        rows.append(f'<div class="scene-row"><span class="scene-key">معلم</span><span>{_e(scene.identified_landmark)}</span></div>')
     if scene.architectural_style:
-        rows.append(f'<div class="scene-row"><span class="scene-key">Architecture</span><span>{_e(scene.architectural_style)}</span></div>')
+        rows.append(f'<div class="scene-row"><span class="scene-key">الطراز المعماري</span><span>{_e(scene.architectural_style)}</span></div>')
     if scene.approximate_location:
-        conf = f" ({scene.confidence:.0%} confidence)" if scene.confidence else ""
-        rows.append(f'<div class="scene-row"><span class="scene-key">Approx. Location</span><span>{_e(scene.approximate_location)}{_e(conf)}</span></div>')
+        conf = f" ({scene.confidence:.0%} ثقة)" if scene.confidence else ""
+        rows.append(f'<div class="scene-row"><span class="scene-key">الموقع التقريبي</span><span>{_e(scene.approximate_location)}{_e(conf)}</span></div>')
     if scene.location_hints:
         hints_html = "".join(f'<li>{_e(h)}</li>' for h in scene.location_hints)
-        rows.append(f'<div class="scene-row"><span class="scene-key">Location Hints</span><ul class="hint-list">{hints_html}</ul></div>')
+        rows.append(f'<div class="scene-row"><span class="scene-key">تلميحات الموقع</span><ul class="hint-list">{hints_html}</ul></div>')
 
     if not rows:
-        return _section("Scene &amp; Location", "📍", '<p class="muted">No scene information available.</p>')
+        return _section("المشهد والموقع", "📍", '<p class="muted">لا معلومات عن المشهد.</p>')
 
-    return _section("Scene &amp; Location", "📍", '<div class="scene-block">' + "\n".join(rows) + "</div>")
+    return _section("المشهد والموقع", "📍", '<div class="scene-block">' + "\n".join(rows) + "</div>")
 
 
 def _build_audio_section(audio) -> str:
@@ -232,23 +315,25 @@ def _build_audio_section(audio) -> str:
     if audio.audio_events:
         event_items = "".join(
             f'<li><span class="event-ts">{_e(ev.timestamp)}</span>'
-            f'<span class="event-name">{_e(ev.event.replace("_", " ").title())}</span>'
-            f'<span class="event-intensity intensity-{_e(ev.intensity or "")}">{_e((ev.intensity or "").upper())}</span></li>'
+            f'<span class="event-name">{_e(ev.event.replace("_", " "))}</span>'
+            f'<span class="event-intensity intensity-{_e(ev.intensity or "")}">'
+            f'{_e(_INTENSITY_LABELS_AR.get((ev.intensity or "").lower(), ev.intensity or ""))}'
+            f'</span></li>'
             for ev in audio.audio_events
         )
-        events_html = f'<h3 class="sub-title">Audio Events</h3><ul class="event-list">{event_items}</ul>'
+        events_html = f'<h3 class="sub-title">الأحداث الصوتية</h3><ul class="event-list">{event_items}</ul>'
 
     content = f"""
     <div class="audio-meta">
-      <div><span class="meta-key">Sentiment</span>{sentiment_badge}</div>
-      <div><span class="meta-key">Language</span><span class="meta-val">{_e(audio.language.upper())}</span></div>
-      <div><span class="meta-key">Confidence</span><span class="meta-val">{conf_pct}</span></div>
+      <div><span class="meta-key">المشاعر</span>{sentiment_badge}</div>
+      <div><span class="meta-key">اللغة</span><span class="meta-val">{_e(audio.language.upper())}</span></div>
+      <div><span class="meta-key">درجة الثقة</span><span class="meta-val">{conf_pct}</span></div>
     </div>
-    <h3 class="sub-title">Transcript</h3>
+    <h3 class="sub-title">النص المفرغ</h3>
     {transcript_html}
     {events_html}"""
 
-    return _section("Audio Analysis", "🎙️", content)
+    return _section("تحليل الصوت", "🎙️", content)
 
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
@@ -257,11 +342,11 @@ _CSS = """
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-family: 'Segoe UI', 'Cairo', 'Tahoma', 'Arial Unicode MS', -apple-system, BlinkMacSystemFont, Roboto, 'Helvetica Neue', Arial, sans-serif;
   background: #f8fafc;
   color: #1e293b;
   font-size: 15px;
-  line-height: 1.6;
+  line-height: 1.8;
 }
 
 .page-wrap { max-width: 860px; margin: 0 auto; padding: 32px 20px 60px; }
@@ -322,17 +407,54 @@ body {
 .danger-bar-wrap { flex: 1; min-width: 200px; }
 .danger-bar-track {
   height: 14px;
-  background: #f1f5f9;
+  background: #cbd5e1;
   border-radius: 99px;
   overflow: hidden;
 }
 .danger-bar-fill { height: 100%; border-radius: 99px; transition: width 0.3s; }
-.danger-bar-labels {
+.jurisdiction-banner {
   display: flex;
-  justify-content: space-between;
-  font-size: 0.72rem;
-  color: #94a3b8;
-  margin-top: 4px;
+  align-items: center;
+  gap: 8px;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.jurisdiction-outside {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  color: #64748b;
+}
+.jurisdiction-unknown {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #92400e;
+}
+.jurisdiction-icon { font-size: 1rem; flex-shrink: 0; }
+
+.danger-bar-ranges {
+  display: flex;
+  margin-top: 6px;
+  border-radius: 6px;
+  overflow: hidden;
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+.range-segment {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 3px 2px;
+  text-align: center;
+  line-height: 1.2;
+}
+.range-nums {
+  font-size: 0.6rem;
+  font-weight: 400;
+  opacity: 0.8;
+  direction: ltr;
 }
 
 /* Assessment */
@@ -345,8 +467,8 @@ body {
   margin-top: 16px;
   padding: 14px 18px;
   background: #eff6ff;
-  border-left: 4px solid #3b82f6;
-  border-radius: 0 8px 8px 0;
+  border-right: 4px solid #3b82f6;
+  border-radius: 8px 0 0 8px;
   font-size: 0.9rem;
   color: #1e40af;
 }
@@ -375,7 +497,7 @@ body {
   padding: 2px 8px;
   border-radius: 99px;
 }
-.crime-ts { font-size: 0.78rem; color: #94a3b8; margin-left: auto; }
+.crime-ts { font-size: 0.78rem; color: #94a3b8; margin-right: auto; }
 .crime-content { font-size: 0.88rem; color: #475569; }
 
 /* Entities */
@@ -393,7 +515,7 @@ body {
 .entity-alert { background: #fff5f5; border-color: #fee2e2; }
 .entity-icon { font-size: 1rem; flex-shrink: 0; }
 .entity-label { font-weight: 600; color: #334155; flex-shrink: 0; }
-.entity-value { color: #475569; margin-left: auto; text-align: right; }
+.entity-value { color: #475569; margin-right: auto; text-align: right; }
 
 /* Scene */
 .scene-block { display: flex; flex-direction: column; gap: 12px; }
@@ -409,7 +531,7 @@ body {
   min-width: 140px;
   flex-shrink: 0;
 }
-.hint-list { margin: 4px 0 0 16px; color: #475569; }
+.hint-list { margin: 4px 16px 0 0; color: #475569; }
 .hint-list li { margin-bottom: 2px; }
 
 /* Audio */
@@ -426,7 +548,7 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: #94a3b8;
-  margin-right: 8px;
+  margin-left: 8px;
 }
 .meta-val { font-weight: 600; color: #334155; }
 .sub-title {
@@ -471,6 +593,61 @@ body {
 .intensity-medium { background:#fef9c3; color:#854d0e; }
 .intensity-high   { background:#fee2e2; color:#991b1b; }
 
+/* Penal code articles (matched to a crime) */
+.penal-articles {
+  margin-top: 14px;
+  border-top: 1px dashed #e2e8f0;
+  padding-top: 12px;
+}
+.penal-articles-title {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #94a3b8;
+  margin-bottom: 10px;
+}
+.penal-article-item {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-right: 3px solid #3b82f6;
+  border-radius: 0 6px 6px 0;
+  padding: 10px 14px;
+  margin-bottom: 8px;
+}
+.penal-article-item:last-child { margin-bottom: 0; }
+.penal-article-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.penal-article-num {
+  font-weight: 700;
+  font-size: 0.82rem;
+  color: #1e40af;
+}
+.penal-chapter {
+  font-size: 0.78rem;
+  color: #64748b;
+  flex: 1;
+}
+.penal-sim {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #0369a1;
+  background: #e0f2fe;
+  padding: 2px 8px;
+  border-radius: 99px;
+  white-space: nowrap;
+}
+.penal-article-text {
+  font-size: 0.84rem;
+  color: #334155;
+  line-height: 1.9;
+}
+
 /* Badge */
 .badge {
   display: inline-block;
@@ -482,6 +659,9 @@ body {
 
 /* Misc */
 .muted { color: #94a3b8; font-style: italic; }
+
+/* Video player */
+.video-player-card video { display: block; }
 
 /* Footer */
 .report-footer {
@@ -503,13 +683,25 @@ body {
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
-def generate_html_report(result: MediaAnalysisResult, output_path: str) -> None:
+def _build_video_player(video_url: str) -> str:
+    return f"""
+    <section class="card video-player-card">
+      <h2 class="card-title"><span class="icon">▶️</span>الفيديو</h2>
+      <video controls preload="metadata" style="width:100%;border-radius:8px;max-height:480px;background:#000;">
+        <source src="{_e(video_url)}" type="video/mp4">
+      </video>
+    </section>"""
+
+
+def generate_html_report(result: MediaAnalysisResult, output_path: str, video_url: Optional[str] = None) -> None:
     """
     Write a self-contained HTML analysis report to output_path.
 
     Args:
         result:      Completed MediaAnalysisResult from the pipeline
         output_path: Destination .html file path
+        video_url:   Optional public URL to the video (e.g. Supabase Storage).
+                     When provided, an embedded player is shown at the top of the report.
     """
     va = result.video_analysis
     aa = result.audio_analysis
@@ -518,13 +710,13 @@ def generate_html_report(result: MediaAnalysisResult, output_path: str) -> None:
     # ── Header ──────────────────────────────────────────────────────────────
     header_html = f"""
   <div class="report-header">
-    <div class="project-name">Project Ain</div>
-    <h1>Media Analysis Report</h1>
+    <div class="project-name">مشروع عين</div>
+    <h1>تقرير تحليل الميديا</h1>
     <div class="report-meta">
-      <span><b>Reel</b> {_e(shortcode)}</span>
-      <span><b>Analysed</b> {_e(result.timestamp[:19].replace("T", " "))}</span>
-      <span><b>People detected</b> {va.detected_entities.people_count}</span>
-      <span><b>Crimes found</b> {len(va.possible_crimes)}</span>
+      <span><b>ريل</b> {_e(shortcode)}</span>
+      <span><b>وقت التحليل</b> {_e(result.timestamp[:19].replace("T", " "))}</span>
+      <span><b>أشخاص مرصودون</b> {va.detected_entities.people_count}</span>
+      <span><b>جرائم مرصودة</b> {len(va.possible_crimes)}</span>
     </div>
   </div>"""
 
@@ -533,41 +725,44 @@ def generate_html_report(result: MediaAnalysisResult, output_path: str) -> None:
     if result.recommended_action:
         action_html = f"""
     <div class="action-box">
-      <strong>Recommended Action</strong>
+      <strong>الإجراء الموصى به</strong>
       {_e(result.recommended_action)}
     </div>"""
 
     assessment_section = _section(
-        "Overall Assessment", "📋",
+        "التقييم العام", "📋",
         f'<p class="assessment-text">{_e(result.overall_assessment)}</p>{action_html}',
     )
 
     # ── Video description ────────────────────────────────────────────────────
     description_section = _section(
-        "Video Description", "🎬",
+        "وصف الفيديو", "🎬",
         f'<p class="assessment-text">{_e(va.description)}</p>',
     )
 
     # ── Assemble body ────────────────────────────────────────────────────────
-    body = "\n".join([
-        header_html,
-        _build_danger_section(va.danger_score),
+    sections = [header_html]
+    if video_url:
+        sections.append(_build_video_player(video_url))
+    sections += [
+        _build_danger_section(va.danger_score, va.crime_classification, va.in_egypt),
         assessment_section,
         description_section,
         _build_crimes_section(va.possible_crimes),
         _build_entities_section(va.detected_entities),
         _build_scene_section(va.scene_landmarks),
         _build_audio_section(aa),
-    ])
+    ]
+    body = "\n".join(sections)
 
-    footer_html = f'<div class="report-footer">Generated by Project Ain &mdash; {_e(result.timestamp[:19].replace("T", " "))}</div>'
+    footer_html = f'<div class="report-footer">تم الإنشاء بواسطة مشروع عين &mdash; {_e(result.timestamp[:19].replace("T", " "))}</div>'
 
     html = f"""<!DOCTYPE html>
-<html lang="en">
+<html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Analysis Report — {_e(shortcode)}</title>
+  <title>تقرير التحليل — {_e(shortcode)}</title>
   <style>{_CSS}</style>
 </head>
 <body>
