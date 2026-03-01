@@ -34,15 +34,26 @@ async def DMListener(request: Request, background_tasks: BackgroundTasks):
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-    # Extract the ig_reel attachment from the DM payload, if present
+    # Extract the ig_reel attachment from the DM payload, if present.
+    # Instagram sends DMs under "messaging" (primary receiver) or
+    # "standby" (Handover Protocol — bot is not primary thread owner).
+    # Both have the same message structure so we handle them identically.
+    reel_attachment = None
     try:
-        messaging = data["entry"][0]["messaging"][0]
-        attachments = messaging.get("message", {}).get("attachments", [])
-        reel_attachment = next(
-            (a for a in attachments if a.get("type") == "ig_reel"), None
-        )
-    except (KeyError, IndexError):
-        reel_attachment = None
+        entry = data["entry"][0]
+        thread = entry.get("messaging") or entry.get("standby") or []
+        logger.info(f"[DMListener] Found thread key: {'messaging' if entry.get('messaging') else 'standby' if entry.get('standby') else 'NONE'}, items: {len(thread)}")
+        
+        if thread:
+            messaging = thread[0]
+            attachments = messaging.get("message", {}).get("attachments", [])
+            logger.info(f"[DMListener] Attachments found: {[a.get('type') for a in attachments]}")
+            
+            reel_attachment = next(
+                (a for a in attachments if a.get("type") == "ig_reel"), None
+            )
+    except (KeyError, IndexError) as e:
+        logger.error(f"[DMListener] Error parsing payload: {e}")
 
     if reel_attachment:
         payload = reel_attachment["payload"]

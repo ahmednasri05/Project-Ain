@@ -52,13 +52,18 @@ class VideoAnalyzer:
             logger.info(f"Video size: {video_size_mb:.2f} MB")
             
             # Create detailed analysis prompt
-            analysis_prompt = """Analyze this video in extreme detail and provide a comprehensive structured analysis in JSON format.
+            analysis_prompt = """You are a Senior Forensic Investigator for the Egyptian Public Prosecution’s Digital Evidence Unit.
+             Your objective is to classify video content for potential violations of the Egyptian Penal Code, Traffic Law, and Cybercrime Law or other crimes in general. 
+             You must first verify if the video occurs within Egypt otherwise irrelevant. you must distinguish between actionable crimes and social media spam.
+              Any video identified as an action movie clip, video game footage, viral prank, fictional content,
+               or violence occurring outside of Egypt is IRRELEVANT.
 
 IMPORTANT: Respond ONLY with valid JSON. Do not include any explanatory text before or after the JSON.
 
 Provide analysis in this EXACT JSON format:
 {
   "description": "detailed description of what happens in the video",
+  # include only relevant entities to crime detection
   "detected_entities": {
     "weapons": [
       {"type": "weapon_type", "confidence": 0.0-1.0, "timestamp": "MM:SS", "description": "details"}
@@ -102,10 +107,10 @@ Guidelines:
 2. **Vehicles**: sedan, suv, truck, motorcycle, etc. Include color always.
 3. **License Plates**: Try to read any visible license plates. For Arabic plates, transcribe as-is.
 4. **Landmarks**: Identify any recognizable locations, buildings, bridges, signs, streets.
-5. **Approximate Location**: Based on landmarks, signs, architecture, license plates, and any visible text, predict the most specific location possible. Format: "City, District, Street" or "City, Area description". Include Egyptian governorate if identifiable. Be as detailed and accurate as possible.
+5. **Approximate Location**: Based on landmarks, signs, architecture, license plates, and any visible text, language, predict the most specific location possible. Format: "City, District, Street" or "City, Area description". Include Egyptian governorate if in Egypt only if you are sure. Be as detailed and accurate as possible.
 6. **Crimes** — two separate fields per crime:
    - `rule_violated`: a short Arabic display label, e.g. "ضرب وجرح بسلاح", "سرقة بالإكراه", "إتلاف ممتلكات".
-   - `penal_code_query`: 1–3 sentences in formal legal Arabic characterising the offense for semantic search against قانون العقوبات المصري. Include: the precise legal act (e.g. إيذاء جسدي عمد، سرقة بالتهديد), any aggravating circumstances visible (استخدام سلاح، تعدد الجناة، الليل), the punishment tier implied (جناية/جنحة/مخالفة), and any relevant legal concepts (إكراه، عاهة مستديمة، تلبّس). Example: "إيذاء جسدي عمدي بالضرب باستخدام آلة حادة أفضى إلى جرح — جريمة ضرب وجرح وفقاً لأحكام قانون العقوبات المصري، مع توافر ظرف مشدد لاستخدام سلاح."
+   - `penal_code_query`: 1–2 sentences in formal legal Arabic characterising the offense for semantic search against قانون العقوبات المصري. Include: the precise legal act (e.g. إيذاء جسدي عمد، سرقة بالتهديد), any aggravating circumstances visible (استخدام سلاح، تعدد الجناة، الليل), the punishment tier implied (جناية/جنحة/مخالفة), and any relevant legal concepts (إكراه، عاهة مستديمة، تلبّس). Example: "إيذاء جسدي عمدي بالضرب باستخدام آلة حادة أفضى إلى جرح — جريمة ضرب وجرح وفقاً لأحكام قانون العقوبات المصري، مع توافر ظرف مشدد لاستخدام سلاح."
 7. **Danger Score**: 0=safe, 1-3=violation, 4-6=misdemeanor, 7-10=felony. Align with crime_classification below.
 8. **Timestamps**: Use MM:SS format. If exact time unknown, estimate based on video position.
 9. **Location**: Set "in_egypt" to exactly one of these three values based on visual evidence (landmarks, license plates, signage, architecture, language of text visible in video):
