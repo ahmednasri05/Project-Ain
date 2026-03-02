@@ -8,15 +8,18 @@ Flow:
   2. Extract audio
   3. Run AI analysis (video + audio in parallel)
   4. Save JSON + HTML report to output/
+  5. Persist pipeline_run + processed_crime_report to Supabase
 """
 
+import os
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from util.helpers_ytdlp import download_video_ytdlp as download_video, extract_audio
 from ai.media_processor import MediaProcessor
+from db import insert_pipeline_run, update_pipeline_run, save_processed_crime_report
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +35,11 @@ async def run_dm_pipeline(
     Args:
         video_url:  Direct CDN URL from the webhook payload's attachments[].payload.url
         caption:    Reel caption from attachments[].payload.title
-        asset_id:   Numeric reel_video_id, used as the filename stem
+        asset_id:   Numeric reel_video_id, used as the filename stem and DB shortcode
 
     Returns:
         Result dict with keys: status, asset_id, danger_score, crimes,
-        sentiment, recommended_action, output_file
+        sentiment, recommended_action
     """
     print(f"\n{'='*60}")
     print(f"[DM Pipeline] Processing asset: {asset_id}")
@@ -47,9 +50,13 @@ async def run_dm_pipeline(
 
     video_path: Optional[str] = None
     audio_path: Optional[str] = None
+    run_id: Optional[int] = None
     start_time = datetime.now()
+    _result: dict = {"status": "error", "asset_id": asset_id, "reason": "pipeline did not complete"}
 
     try:
+        run_id = await insert_pipeline_run(asset_id)
+
         # ── Step 1: Download video ────────────────────────────────────
         print("\n[1/3] Downloading video...")
         print(f"  → URL: {video_url[:80]}...")
@@ -83,10 +90,14 @@ async def run_dm_pipeline(
         print(f"  ✓ Sentiment    : {sentiment}")
         print(f"  ✓ Action       : {action}")
 
+        print(f"  → Saving crime report to database...")
+        await save_processed_crime_report(shortcode=asset_id, media_analysis_result=analysis)
+        print(f"  ✓ Crime report saved")
+
         elapsed = (datetime.now() - start_time).total_seconds()
         print(f"\n[DM Pipeline] Done in {elapsed:.1f}s")
 
-        return {
+        _result = {
             "status": "success",
             "asset_id": asset_id,
             "danger_score": danger,
@@ -94,6 +105,7 @@ async def run_dm_pipeline(
             "sentiment": sentiment,
             "recommended_action": action,
         }
+        return _result
 
     except Exception as e:
         elapsed = (datetime.now() - start_time).total_seconds()
@@ -101,8 +113,42 @@ async def run_dm_pipeline(
         print(f"\n  ✗ Error: {e}")
         import traceback
         traceback.print_exc()
-        return {
+        _result = {
             "status": "error",
             "asset_id": asset_id,
             "reason": str(e),
         }
+        return _result
+
+    finally:
+        duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+        if run_id is not None:
+            status = _result.get("status", "error")
+            run_update: dict = {
+                "status": status,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "duration_ms": duration_ms,
+            }
+            if status == "success":
+                run_update["danger_score"] = _result.get("danger_score")
+                run_update["crimes_count"] = _result.get("crimes")
+                run_update["recommended_action"] = _result.get("recommended_action")
+            elif status == "error":
+                run_update["error_reason"] = _result.get("reason")
+            try:
+                await update_pipeline_run(run_id, run_update)
+            except Exception as log_err:
+                logger.warning(f"[DM Pipeline] failed to update pipeline_run {run_id}: {log_err}")
+
+        for path in [video_path, audio_path]:
+            if path and os.path.exists(path):
+                for attempt in range(5):
+                    try:
+                        os.remove(path)
+                        print(f"  [cleanup] removed {os.path.basename(path)}")
+                        break
+                    except PermissionError:
+                        if attempt < 4:
+                            await asyncio.sleep(0.3)
+                        else:
+                            print(f"  [cleanup] could not remove {os.path.basename(path)} — file still locked")
