@@ -71,12 +71,3 @@ async def DMListener(request: Request, background_tasks: BackgroundTasks):
 
     return JSONResponse(content={"received": True}, status_code=200)
 
-
-# @router.post("")
-# async def mentionlistener(request: Request):
-#     data, parse_status, mediaid = await parse_webhook_data(request)
-#     store_payload(data, parse_status)
-#     if mediaid:
-#         videopath, audiopath = await process_mention(mediaid)
-#         store_media(mediaid, videopath, audiopath)
-#     return JSONResponse(content={"request arrived": True}, status_code=200)

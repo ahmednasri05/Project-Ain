@@ -97,6 +97,7 @@ class VideoAnalysis(BaseModel):
     possible_crimes: List[PossibleCrime] = Field(default_factory=list)
     danger_score: int = Field(..., ge=0, le=10, description="Overall danger score (0-10)")
     crime_classification: Optional[str] = Field(None, description="Egyptian law classification: جناية / جنحة / مخالفة / لا شيء")
+    crime_category: List[int] = Field(default_factory=list, description="Crime category numbers (1-10), max 2")
     in_egypt: str = Field(default="غير محدد", description="Whether crime is in Egypt: نعم / لا / غير محدد")
     quality_notes: Optional[str] = Field(None, description="Notes about video quality")
 
@@ -111,6 +112,7 @@ class MediaAnalysisResult(BaseModel):
     audio_analysis: AudioAnalysis
     overall_assessment: str = Field(..., description="Combined assessment of the situation")
     recommended_action: Optional[str] = Field(None, description="Recommended action based on analysis")
+    comment_summary: Optional[str] = Field(None, description="Summary of social media comments about the video")
 
 
 # Sentiment Analysis Schemas
@@ -118,3 +120,4 @@ class SentimentAnalysis(BaseModel):
     """Sentiment analysis results."""
     label: str = Field(..., description="Sentiment label (CRIME_REPORT, SPAM_SARCASM, AMBIGUOUS)")
     explanation: str = Field(..., description="Explanation for the sentiment label")
+    summary: Optional[str] = Field(None, description="Short Arabic summary of comments and inferred metadata")

@@ -21,8 +21,8 @@ Batch flow:
 """
 
 import os
-import re
 import asyncio
+import traceback
 import httpx
 import aiohttp
 from datetime import datetime, timezone
@@ -62,6 +62,7 @@ _STEP_LABELS = {
 
 from util.apify import scrape_reels_batch
 from util.helpers_ytdlp import download_video_ytdlp as download_video, extract_audio
+from util.instagram import extract_shortcode as _extract_shortcode
 from db import (
     save_reel, bulk_save_comments, upload_to_supabase, get_storage_bucket,
     get_reel_by_shortcode, increment_mention_count,
@@ -73,29 +74,6 @@ from .comment_formatter import get_comments_for_sentiment_analysis
 from ai.media_processor import MediaProcessor
 from ai.sentiment_analyzer import SentimentAnalyzer
 
-
-def _extract_shortcode(input_str: str) -> str:
-    """
-    Normalize user input to a bare shortcode.
-    Handles plain shortcodes and all known Instagram URL formats:
-        /reel/SHORTCODE/
-        /p/SHORTCODE/          (older permalink format)
-        /tv/SHORTCODE/         (IGTV)
-
-    Examples:
-        "DRLS0KOAdv2"                                    → "DRLS0KOAdv2"
-        "https://www.instagram.com/reel/DRLS0KOAdv2/"   → "DRLS0KOAdv2"
-        "https://www.instagram.com/p/DRLS0KOAdv2/"      → "DRLS0KOAdv2"
-        "https://www.instagram.com/reel/DRLS0KOAdv2/?igsh=abc" → "DRLS0KOAdv2"
-    """
-    input_str = input_str.strip()
-    if input_str.startswith("http"):
-        match = re.search(r"/(?:reel|p|tv)/([A-Za-z0-9_-]+)", input_str)
-        if match:
-            return match.group(1)
-        # URL recognised but pattern not matched — return as-is and let
-        # Apify handle it; the shortcode check will simply find nothing.
-    return input_str
 
 
 async def _process_reel_from_data(
@@ -136,9 +114,10 @@ async def _process_reel_from_data(
 
     _result: Dict[str, Any] = {"status": "error", "shortcode": shortcode, "reason": "pipeline did not complete"}
     _run_id:    Optional[int] = None
-    _start_time = datetime.now()
+    _start_time = datetime.now(timezone.utc)
     _attempts   = 0
     _current_step = 2
+    comment_summary: Optional[str] = None
 
     print(f"  ✓ @{reel_payload['ownerUsername']} / {shortcode}")
     print(f"  ✓ {len(comments)} comment(s) fetched")
@@ -251,12 +230,16 @@ async def _process_reel_from_data(
 
                 # ── Step 8: Comment sentiment gate ────────────────────
                 elif _current_step == 8:
+                    comment_summary = None
                     if comments:
-                        print("\n[6c/7] Running comment sentiment gate...")
+                        print("\n[8/9] Running comment sentiment gate...")
                         comments_text    = await get_comments_for_sentiment_analysis(shortcode)
                         sentiment_result = await SentimentAnalyzer().analyze_sentiment(comments_text)
                         print(f"  ✓ Sentiment label : {sentiment_result.label}")
                         print(f"  ✓ Explanation     : {sentiment_result.explanation}")
+                        if sentiment_result.summary:
+                            print(f"  ✓ Summary         : {sentiment_result.summary}")
+                            comment_summary = sentiment_result.summary
 
                         if sentiment_result.label == "SPAM_SARCASM" and not skip_sentiment:
                             print(f"  ⚠ Comments classified as SPAM_SARCASM — skipping AI analysis")
@@ -271,7 +254,7 @@ async def _process_reel_from_data(
 
                         print(f"  ✓ Gate passed ({sentiment_result.label}) — proceeding to AI analysis")
                     else:
-                        print("\n[6c/7] Comment sentiment gate skipped (no comments)")
+                        print("\n[8/9] Comment sentiment gate skipped (no comments)")
                     _current_step = 9
 
                 # ── Step 9: AI analysis ───────────────────────────────
@@ -279,6 +262,10 @@ async def _process_reel_from_data(
                     print("\n[7/7] Running AI analysis (video + audio in parallel)...")
                     processor = MediaProcessor()
                     analysis  = await processor.process_media(video_path=video_path, audio_path=audio_path, language="ar")
+
+                    # Attach comment summary from sentiment gate (step 8)
+                    if comment_summary:
+                        analysis.comment_summary = comment_summary
 
                     danger    = analysis.video_analysis.danger_score
                     crimes    = analysis.video_analysis.possible_crimes
@@ -330,7 +317,6 @@ async def _process_reel_from_data(
 
     except Exception as e:
         print(f"\n  ✗ Error: {e}")
-        import traceback
         traceback.print_exc()
         _result = {"status": "error", "shortcode": shortcode, "reason": str(e)}
         step_label = _STEP_LABELS.get(_current_step, f"step_{_current_step}")
@@ -341,7 +327,7 @@ async def _process_reel_from_data(
         return _result
 
     finally:
-        duration_ms = int((datetime.now() - _start_time).total_seconds() * 1000)
+        duration_ms = int((datetime.now(timezone.utc) - _start_time).total_seconds() * 1000)
         if _run_id is not None:
             status = _result.get("status", "error")
             run_update: Dict[str, Any] = {

@@ -14,6 +14,7 @@ Flow:
 import os
 import asyncio
 import logging
+import traceback
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -51,7 +52,7 @@ async def run_dm_pipeline(
     video_path: Optional[str] = None
     audio_path: Optional[str] = None
     run_id: Optional[int] = None
-    start_time = datetime.now()
+    start_time = datetime.now(timezone.utc)
     _result: dict = {"status": "error", "asset_id": asset_id, "reason": "pipeline did not complete"}
 
     try:
@@ -108,10 +109,8 @@ async def run_dm_pipeline(
         return _result
 
     except Exception as e:
-        elapsed = (datetime.now() - start_time).total_seconds()
-        logger.exception(f"[DM Pipeline] Failed for asset {asset_id} after {elapsed:.1f}s: {e}")
+        logger.exception(f"[DM Pipeline] Failed for asset {asset_id} after {(datetime.now(timezone.utc) - start_time).total_seconds():.1f}s: {e}")
         print(f"\n  ✗ Error: {e}")
-        import traceback
         traceback.print_exc()
         _result = {
             "status": "error",
@@ -121,7 +120,7 @@ async def run_dm_pipeline(
         return _result
 
     finally:
-        duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+        duration_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
         if run_id is not None:
             status = _result.get("status", "error")
             run_update: dict = {

@@ -4,7 +4,7 @@ Provides REST endpoints for the Project Ain frontend dashboard.
 All endpoints are prefixed with /api.
 """
 
-import re
+
 import asyncio
 import logging
 from datetime import datetime, timezone
@@ -17,30 +17,12 @@ from pydantic import BaseModel
 from db.client import get_supabase_client
 from services.pipeline import run_batch_pipeline
 from services.dm_pipeline import run_dm_pipeline
+from util.instagram import extract_shortcode as _extract_shortcode, is_instagram_url as _is_instagram_url
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
 
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _is_instagram_url(url: str) -> bool:
-    """Return True if the URL points to Instagram (or is a bare shortcode)."""
-    url = url.strip()
-    if not url.startswith("http"):
-        return True
-    return "instagram.com" in url
-
-
-def _extract_shortcode(url: str) -> str:
-    """Normalise an Instagram URL or bare shortcode to just the shortcode."""
-    url = url.strip()
-    if url.startswith("http"):
-        match = re.search(r"/(?:reel|p|tv)/([A-Za-z0-9_-]+)", url)
-        if match:
-            return match.group(1)
-    return url
 
 
 # ── Request bodies ────────────────────────────────────────────────────────────
@@ -57,12 +39,13 @@ async def list_reports(
     limit: int = Query(20, ge=1, le=100),
     severity: Optional[str] = None,
     crime_classification: Optional[str] = None,
-    in_egypt: Optional[str] = None,
+    in_egypt: Optional[bool] = None,
+    crime_category: Optional[int] = Query(None, ge=1, le=10),
     min_danger: Optional[int] = Query(None, ge=0, le=10),
     max_danger: Optional[int] = Query(None, ge=0, le=10),
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
-    sort_by: str = Query("processed_at", pattern="^(processed_at|danger_score|severity)$"),
+    sort_by: str = Query("processed_at", pattern="^(processed_at|danger_score|severity|mention_count)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
 ):
     """
@@ -74,8 +57,8 @@ async def list_reports(
 
         q = supabase.table("processed_crime_reports").select(
             "id, reel_shortcode, approximate_location, rule_violated, severity, "
-            "danger_score, crime_classification, in_egypt, overall_assessment, "
-            "recommended_action, processed_at",
+            "danger_score, crime_classification, crime_category, in_egypt, "
+            "mention_count, overall_assessment, recommended_action, processed_at",
             count="exact",
         )
 
@@ -85,6 +68,8 @@ async def list_reports(
             q = q.eq("crime_classification", crime_classification)
         if in_egypt:
             q = q.eq("in_egypt", in_egypt)
+        if crime_category is not None:
+            q = q.contains("crime_category", [crime_category])
         if min_danger is not None:
             q = q.gte("danger_score", min_danger)
         if max_danger is not None:
@@ -144,7 +129,7 @@ async def analyze_url(body: AnalyzeRequest, background_tasks: BackgroundTasks):
         logger.info(f"[API] Queued full pipeline for shortcode: {shortcode}")
         return {"queued": True, "type": "full", "identifier": shortcode}
     else:
-        asset_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        asset_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         background_tasks.add_task(run_dm_pipeline, url, "", asset_id)
         logger.info(f"[API] Queued DM pipeline for direct URL (asset_id: {asset_id})")
         return {"queued": True, "type": "dm", "identifier": asset_id}
@@ -227,7 +212,7 @@ async def get_stats():
         supabase = get_supabase_client()
         response = (
             supabase.table("processed_crime_reports")
-            .select("danger_score, crime_classification, severity")
+            .select("danger_score, crime_classification, severity, crime_category")
             .execute()
         )
         return response.data or []
@@ -239,15 +224,19 @@ async def get_stats():
 
     by_classification: dict = {}
     by_severity: dict = {}
+    by_crime_category: dict = {}
     for r in rows:
         cls = r.get("crime_classification") or "غير محدد"
         sev = r.get("severity") or "غير محدد"
         by_classification[cls] = by_classification.get(cls, 0) + 1
         by_severity[sev] = by_severity.get(sev, 0) + 1
+        for cat in (r.get("crime_category") or []):
+            by_crime_category[cat] = by_crime_category.get(cat, 0) + 1
 
     return {
         "total_reports": total,
         "avg_danger_score": avg_danger,
         "by_classification": by_classification,
         "by_severity": by_severity,
+        "by_crime_category": by_crime_category,
     }

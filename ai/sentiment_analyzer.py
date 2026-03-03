@@ -21,18 +21,23 @@ class SentimentAnalyzer:
             messages=[
                 {"role": "system", "content": (
                     "You are an expert comment classifier for social media relating to possible crime videos in Egypt."
-                    " You will analyze a batch of Egyptian Arabic or English comments and classify their intent as one of exactly these three:"
-                    "\n- CRIME_REPORT: The comments refers to a real crime or credible suspicion of a crime."
-                    "\n- SPAM_SARCASM: The comments is spam, sarcasm, a meme, or otherwise clearly not a genuine report."
-                    "\n- AMBIGUOUS: The comments could not be confidently placed in either category or is unclear."
-                    "\n\nRespond ONLY with a valid JSON object exactly in this format:"
-                    "\n{\"label\": \"CRIME_REPORT\"|\"SPAM_SARCASM\"|\"AMBIGUOUS\", \"explanation\": \"A SHORT explanation for your choice.\"}"
-                    "\n\nIMPORTANT: The label field must be exactly one of: CRIME_REPORT, SPAM_SARCASM, AMBIGUOUS (English, unchanged). The explanation field must be written in Arabic."
+" You will analyze a batch of Egyptian Arabic or English comments and classify their intent as one of exactly these three:"
+
+"\n- CRIME_REPORT: The comments refers to a real crime or credible suspicion of a crime."
+"\n- SPAM_SARCASM: The comments is spam, sarcasm, a meme, or otherwise clearly not a genuine report."
+"\n- AMBIGUOUS: The comments could not be confidently placed in either category or is unclear."
+
+"\n\nIn addition, write a short summary describing the general nature of the comments and any metadata or contextual clues inferred from them (such as possible location, time references, names, events, or situational context related to the video)."
+
+"\n\nRespond ONLY with a valid JSON object exactly in this format:"
+'\n{"label": "CRIME_REPORT"|"SPAM_SARCASM"|"AMBIGUOUS", "explanation": "A SHORT explanation in Arabic for your choice.", "summary": "A SHORT summary in Arabic describing the nature of the comments and any inferred metadata or contextual clues."}'
+
+"\n\nIMPORTANT: The label field must be exactly one of: CRIME_REPORT, SPAM_SARCASM, AMBIGUOUS (English, unchanged). The explanation field must be written in Arabic. The summary field must be written in Arabic."
                 )},
                 {"role": "user", "content": text}
             ],
             response_format={"type": "json_object"},
             temperature=0.2,
-            max_tokens=100
+            max_tokens=300
         )
         return SentimentAnalysis(**json.loads(response.choices[0].message.content.strip()))

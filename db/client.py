@@ -13,6 +13,11 @@ load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise EnvironmentError(
+        "SUPABASE_URL and SUPABASE_KEY must be set in your .env file."
+    )
+
 # Thread-local storage: each thread gets its own client instance.
 # This prevents HTTP/2 connection sharing across threads, which causes
 # "Server disconnected" errors when concurrent uploads use asyncio.to_thread.
@@ -37,5 +42,3 @@ def get_storage_bucket() -> str:
         str: Storage bucket name
     """
     return os.getenv("BUCKET_NAME", "videos")
-
-

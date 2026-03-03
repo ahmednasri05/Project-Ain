@@ -8,6 +8,8 @@ import asyncio
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
 from .client import get_supabase_client
+from ai.schemas import MediaAnalysisResult
+
 
 
 async def get_reel_by_shortcode(shortcode: str) -> Optional[Dict[str, Any]]:
@@ -181,6 +183,8 @@ async def save_comment_thread(
 
         except Exception as e:
             print(f"Error inserting comment thread: {e}")
+            raise
+
 
         return inserted_records
 
@@ -329,8 +333,8 @@ async def fetch_comments_from_db(shortcode: str) -> List[Dict[str, Any]]:
     return await asyncio.to_thread(_fetch)
 
 
+
 # ── Processed Crime Reports (Final Pipeline Output) ───────────────────────────
-from ai.schemas import MediaAnalysisResult
 
 async def save_processed_crime_report(
     shortcode: str,
@@ -392,6 +396,11 @@ async def save_processed_crime_report(
         danger_score = video_analysis.danger_score
         crime_classification = video_analysis.crime_classification
         in_egypt = video_analysis.in_egypt
+        crime_category = video_analysis.crime_category or []
+
+        # Fetch mention_count from the raw reel record
+        reel_row = supabase.table("raw_instagram_reels").select("mention_count").eq("shortcode", shortcode).execute()
+        mention_count = reel_row.data[0]["mention_count"] if reel_row.data else 1
 
         # Prepare the report data
         report_data = {
@@ -401,7 +410,9 @@ async def save_processed_crime_report(
             "severity": severity,
             "danger_score": danger_score,
             "crime_classification": crime_classification,
+            "crime_category": crime_category,
             "in_egypt": in_egypt,
+            "mention_count": mention_count,
             "overall_assessment": media_analysis_result.overall_assessment,
             "recommended_action": media_analysis_result.recommended_action,
             "raw_analysis_data": media_analysis_result.model_dump(),  # Convert Pydantic model to dict for JSONB

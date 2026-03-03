@@ -107,7 +107,7 @@ def _badge(text: str, fg: str, bg: str, extra_style: str = "") -> str:
 
 # ── Section builders ──────────────────────────────────────────────────────────
 
-def _build_danger_section(score: int, classification: Optional[str] = None, in_egypt: str = "غير محدد") -> str:
+def _build_danger_section(score: int, classification: Optional[str] = None, in_egypt: str = "غير محدد", crime_category: list = None) -> str:
     label = classification or "لا شيء"
 
     if in_egypt == "نعم":
@@ -145,7 +145,7 @@ def _build_danger_section(score: int, classification: Optional[str] = None, in_e
       </div>"""
         classification_html = f'التصنيف القانوني: <span style="color:{fg}">{_e(label)}</span>'
 
-    return f"""
+    danger_html = f"""
     <section class="card danger-card" style="{border_style}">
       {jurisdiction_banner}
       <div class="danger-inner">
@@ -166,6 +166,40 @@ def _build_danger_section(score: int, classification: Optional[str] = None, in_e
         </div>
       </div>
     </section>"""
+
+    # Append crime category badges if present
+    _CRIME_CATEGORY_LABELS = {
+        1: "أعمال العنف والمشاجرات",
+        2: "أعمال البلطجة وترويع المواطنين",
+        3: "الاستخدام غير القانوني للأسلحة",
+        4: "الجرائم المرورية وتعريض الأرواح للخطر",
+        5: "التعدي على الآداب والقيم العامة",
+        6: "السرقة والنشل والسطو",
+        7: "تعاطي أو ترويج المخدرات",
+        8: "التحرش الجسدي واللفظي",
+        9: "لا شيء",
+        10: "اخري",
+    }
+    if crime_category:
+        badges = " ".join(
+            f'<span style="display:inline-block;background:#f1f5f9;color:#475569;'
+            f'padding:2px 10px;border-radius:12px;font-size:12px;font-weight:600;'
+            f'margin:2px">{_e(_CRIME_CATEGORY_LABELS.get(c, str(c)))}</span>'
+            for c in crime_category
+        )
+        danger_html += f'\n    <section class="card" style="padding:12px 16px"><b>\u0641\u0626\u0629 \u0627\u0644\u062c\u0631\u064a\u0645\u0629:</b> {badges}</section>'
+
+    return danger_html
+
+
+def _build_comment_summary_section(comment_summary: Optional[str]) -> str:
+    """Render the comment summary section if present."""
+    if not comment_summary:
+        return ""
+    return _section(
+        "ملخص التعليقات", "💬",
+        f'<p class="assessment-text">{_e(comment_summary)}</p>',
+    )
 
 
 def _build_matched_articles(articles) -> str:
@@ -745,8 +779,9 @@ def generate_html_report(result: MediaAnalysisResult, output_path: str, video_ur
     if video_url:
         sections.append(_build_video_player(video_url))
     sections += [
-        _build_danger_section(va.danger_score, va.crime_classification, va.in_egypt),
+        _build_danger_section(va.danger_score, va.crime_classification, va.in_egypt, va.crime_category),
         assessment_section,
+        _build_comment_summary_section(result.comment_summary),
         description_section,
         _build_crimes_section(va.possible_crimes),
         _build_entities_section(va.detected_entities),

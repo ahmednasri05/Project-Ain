@@ -15,24 +15,67 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
+function getSeverityFromScore(score) {
+  if (score == null) return { label: "—", fg: "#6b7280", bg: "#f3f4f6" }
+  if (score >= 8) return { label: "حرج", fg: "#dc2626", bg: "#fef2f2" }
+  if (score >= 6) return { label: "شديد", fg: "#ea580c", bg: "#fff7ed" }
+  if (score >= 4) return { label: "متوسط", fg: "#ca8a04", bg: "#fef9c3" }
+  return { label: "بسيط", fg: "#16a34a", bg: "#dcfce7" }
+}
+
 function DangerChip({ score }) {
-  const color =
-    score >= 8 ? { fg: "#dc2626", bg: "#fef2f2" } :
-    score >= 6 ? { fg: "#ea580c", bg: "#fff7ed" } :
-    score >= 4 ? { fg: "#ca8a04", bg: "#fef9c3" } :
-                 { fg: "#16a34a", bg: "#dcfce7" }
+  const { label, fg, bg } = getSeverityFromScore(score)
   return (
     <span
-      className="inline-block font-bold text-sm px-2 py-0.5 rounded"
-      style={{ color: color.fg, background: color.bg }}
+      className="inline-flex flex-col items-center font-bold text-xs px-2 py-0.5 rounded leading-tight"
+      style={{ color: fg, background: bg }}
     >
-      {score}/10
+      <span className="text-sm">{label}</span>
+      <span className="font-normal opacity-70">{score != null ? `${score}/10` : ""}</span>
     </span>
   )
 }
+
+function CrimeCategoryPills({ categories }) {
+  if (!categories?.length) return <span className="text-muted-foreground">—</span>
+  return (
+    <div className="flex flex-wrap gap-1">
+      {categories.map(id => (
+        <span
+          key={id}
+          className="inline-block text-xs px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium leading-tight"
+        >
+          {CRIME_CATEGORIES[id] ?? `فئة ${id}`}
+        </span>
+      ))}
+    </div>
+  )
+}
+
 import { fetchReports, fetchStats, analyzeUrl } from "@/lib/api"
 
 const EMPTY = "all"
+
+const CRIME_CATEGORIES = {
+  1: "أعمال العنف والمشاجرات",
+  2: "أعمال البلطجة وترويع المواطنين",
+  3: "الاستخدام غير القانوني للأسلحة",
+  4: "الجرائم المرورية وتعريض الأرواح للخطر",
+  5: "التعدي على الآداب والقيم العامة",
+  6: "السرقة والنشل والسطو",
+  7: "تعاطي أو ترويج المخدرات",
+  8: "التحرش الجسدي واللفظي",
+  9: "لا شيء",
+  10: "اخري",
+}
+
+// Maps dropdown key → API min/max danger params
+const DANGER_RANGES = {
+  "8-10": { min_danger: 8, max_danger: 10 },
+  "6-7": { min_danger: 6, max_danger: 7 },
+  "4-5": { min_danger: 4, max_danger: 5 },
+  "0-3": { min_danger: 0, max_danger: 3 },
+}
 
 function StatCard({ title, value, sub, icon: Icon, color }) {
   return (
@@ -65,13 +108,14 @@ export default function Dashboard() {
 
   // ── Filters ──────────────────────────────────────────────────────────────
   const [page, setPage] = useState(1)
-  const [severity, setSeverity]             = useState(EMPTY)
+  const [dangerRange, setDangerRange] = useState(EMPTY)
   const [classification, setClassification] = useState(EMPTY)
-  const [inEgypt, setInEgypt]               = useState(EMPTY)
-  const [sortBy, setSortBy]                 = useState("processed_at")
-  const [sortOrder, setSortOrder]           = useState("desc")
-  const [urlInput, setUrlInput]             = useState("")
-  const [submitting, setSubmitting]         = useState(false)
+  const [inEgypt, setInEgypt] = useState(EMPTY)
+  const [crimeCategory, setCrimeCategory] = useState(EMPTY)
+  const [sortBy, setSortBy] = useState("processed_at")
+  const [sortOrder, setSortOrder] = useState("desc")
+  const [urlInput, setUrlInput] = useState("")
+  const [submitting, setSubmitting] = useState(false)
 
   const limit = 20
 
@@ -86,9 +130,10 @@ export default function Dashboard() {
   }
 
   function resetFilters() {
-    setSeverity(EMPTY)
+    setDangerRange(EMPTY)
     setClassification(EMPTY)
     setInEgypt(EMPTY)
+    setCrimeCategory(EMPTY)
     setSortBy("processed_at")
     setSortOrder("desc")
     setPage(1)
@@ -102,16 +147,20 @@ export default function Dashboard() {
   })
 
   const reportsQuery = useQuery({
-    queryKey: ["reports", page, severity, classification, inEgypt, sortBy, sortOrder],
-    queryFn: () => fetchReports({
-      page,
-      limit,
-      severity:            severity !== EMPTY ? severity : undefined,
-      crime_classification: classification !== EMPTY ? classification : undefined,
-      in_egypt:            inEgypt !== EMPTY ? inEgypt : undefined,
-      sort_by:             sortBy,
-      sort_order:          sortOrder,
-    }),
+    queryKey: ["reports", page, dangerRange, classification, inEgypt, crimeCategory, sortBy, sortOrder],
+    queryFn: () => {
+      const rangeParams = dangerRange !== EMPTY ? DANGER_RANGES[dangerRange] : {}
+      return fetchReports({
+        page,
+        limit,
+        ...rangeParams,
+        crime_classification: classification !== EMPTY ? classification : undefined,
+        in_egypt: inEgypt !== EMPTY ? inEgypt : undefined,
+        crime_category: crimeCategory !== EMPTY ? crimeCategory : undefined,
+        sort_by: sortBy,
+        sort_order: sortOrder,
+      })
+    },
     keepPreviousData: true,
   })
 
@@ -209,16 +258,16 @@ export default function Dashboard() {
           <div className="flex gap-4 flex-wrap items-start">
             <div className="flex flex-col gap-1">
               <label className="text-xs text-muted-foreground">مستوى الخطورة</label>
-              <Select value={severity} onValueChange={v => { setSeverity(v); setPage(1) }}>
+              <Select value={dangerRange} onValueChange={v => { setDangerRange(v); setPage(1) }}>
                 <SelectTrigger className="w-40">
                   <SelectValue placeholder="الكل" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={EMPTY}>كل المستويات</SelectItem>
-                  <SelectItem value="critical">حرج</SelectItem>
-                  <SelectItem value="severe">شديد</SelectItem>
-                  <SelectItem value="moderate">متوسط</SelectItem>
-                  <SelectItem value="minor">بسيط</SelectItem>
+                  <SelectItem value="8-10">حرج ‏(8 – 10)</SelectItem>
+                  <SelectItem value="6-7">شديد ‏(6 – 7)</SelectItem>
+                  <SelectItem value="4-5">متوسط ‏(4 – 5)</SelectItem>
+                  <SelectItem value="0-3">بسيط ‏(0 – 3)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -253,6 +302,21 @@ export default function Dashboard() {
                 </SelectContent>
               </Select>
             </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-muted-foreground">فئة الجريمة</label>
+              <Select value={crimeCategory} onValueChange={v => { setCrimeCategory(v); setPage(1) }}>
+                <SelectTrigger className="w-52">
+                  <SelectValue placeholder="الكل" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={EMPTY}>كل الفئات</SelectItem>
+                  {Object.entries(CRIME_CATEGORIES).map(([k, v]) => (
+                    <SelectItem key={k} value={k}>{v}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -280,10 +344,14 @@ export default function Dashboard() {
                   </TableHead>
                   <TableHead>المعرف</TableHead>
                   <TableHead className="cursor-pointer select-none w-24" onClick={() => toggleSort("danger_score")}>
-                    الخطورة <SortIcon field="danger_score" sortBy={sortBy} sortOrder={sortOrder} />
+                    مستوى الخطورة <SortIcon field="danger_score" sortBy={sortBy} sortOrder={sortOrder} />
                   </TableHead>
                   <TableHead>التصنيف</TableHead>
                   <TableHead>داخل مصر</TableHead>
+                  <TableHead>فئة الجريمة</TableHead>
+                  <TableHead className="cursor-pointer select-none w-20" onClick={() => toggleSort("mention_count")}>
+                    الإشارات <SortIcon field="mention_count" sortBy={sortBy} sortOrder={sortOrder} />
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -307,6 +375,12 @@ export default function Dashboard() {
                     </TableCell>
                     <TableCell className="text-sm">
                       {r.in_egypt || "—"}
+                    </TableCell>
+                    <TableCell className="text-sm max-w-[220px]">
+                      <CrimeCategoryPills categories={r.crime_category} />
+                    </TableCell>
+                    <TableCell className="text-sm text-center font-medium">
+                      {r.mention_count ?? 1}
                     </TableCell>
                   </TableRow>
                 ))}

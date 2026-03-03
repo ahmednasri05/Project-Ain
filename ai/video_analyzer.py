@@ -63,12 +63,12 @@ IMPORTANT: Respond ONLY with valid JSON. Do not include any explanatory text bef
 Provide analysis in this EXACT JSON format:
 {
   "description": "detailed description of what happens in the video",
-  # include only relevant entities to crime detection
+  # ONLY include relevant entities to crime detection
   "detected_entities": {
     "weapons": [
       {"type": "weapon_type", "confidence": 0.0-1.0, "timestamp": "MM:SS", "description": "details"}
     ],
-    #only if relevant to crime detection:
+    #ONLY include if relevant to crime detection:
     "vehicles": [
       {
         "type": "vehicle_type",
@@ -97,8 +97,23 @@ Provide analysis in this EXACT JSON format:
       "penal_code_query": "formal Egyptian Penal Code characterisation for semantic search"
     }
   ],
-  "danger_score": 0-10,
-  "crime_classification": "جناية" | "جنحة" | "مخالفة" | "لا شيء",
+  "danger_score": 0,
+  "crime_classification": "جناية",
+  "crime_category": [1, 4],
+  "in_egypt": "نعم"
+}
+
+CRIME CATEGORY REFERENCE (choose up to 2 numbers):
+1. أعمال العنف والمشاجرات
+2. أعمال البلطجة وترويع المواطنين
+3. الاستخدام غير القانوني للأسلحة
+4. الجرائم المرورية وتعريض الأرواح للخطر
+5. التعدي على الآداب والقيم العامة
+6. السرقة والنشل والسطو
+7. تعاطي أو ترويج المواد المخدرة علناً
+8. التحرش الجسدي واللفظي
+9. لا شيء
+10. اخري",
   "in_egypt": "نعم" | "لا" | "غير محدد"
 }
 
@@ -111,7 +126,7 @@ Guidelines:
 6. **Crimes** — two separate fields per crime:
    - `rule_violated`: a short Arabic display label, e.g. "ضرب وجرح بسلاح", "سرقة بالإكراه", "إتلاف ممتلكات".
    - `penal_code_query`: 1–2 sentences in formal legal Arabic characterising the offense for semantic search against قانون العقوبات المصري. Include: the precise legal act (e.g. إيذاء جسدي عمد، سرقة بالتهديد), any aggravating circumstances visible (استخدام سلاح، تعدد الجناة، الليل), the punishment tier implied (جناية/جنحة/مخالفة), and any relevant legal concepts (إكراه، عاهة مستديمة، تلبّس). Example: "إيذاء جسدي عمدي بالضرب باستخدام آلة حادة أفضى إلى جرح — جريمة ضرب وجرح وفقاً لأحكام قانون العقوبات المصري، مع توافر ظرف مشدد لاستخدام سلاح."
-7. **Danger Score**: 0=safe, 1-3=violation, 4-6=misdemeanor, 7-10=felony. Align with crime_classification below.
+7. **Danger Score**: 0=safe, 1-3=violation, 4-6=misdemeanor, 7-10=felony. Align with crime_classification below!
 8. **Timestamps**: Use MM:SS format. If exact time unknown, estimate based on video position.
 9. **Location**: Set "in_egypt" to exactly one of these three values based on visual evidence (landmarks, license plates, signage, architecture, language of text visible in video):
     - "نعم"       → clear evidence the crime takes place in Egypt.
@@ -203,6 +218,12 @@ LANGUAGE REQUIREMENT: Write ALL text values in Arabic (Modern Standard Arabic / 
             ]
             
             # Create final result
+            # Normalize crime_category: ensure it's a list of ints clamped to 1-10
+            raw_category = analysis_data.get("crime_category", [])
+            if isinstance(raw_category, int):
+                raw_category = [raw_category]
+            crime_category = [c for c in raw_category if isinstance(c, int) and 1 <= c <= 10][:2]
+
             result = VideoAnalysis(
                 description=analysis_data.get("description", "No description available"),
                 detected_entities=detected_entities,
@@ -210,6 +231,7 @@ LANGUAGE REQUIREMENT: Write ALL text values in Arabic (Modern Standard Arabic / 
                 possible_crimes=possible_crimes,
                 danger_score=analysis_data.get("danger_score", 5),
                 crime_classification=analysis_data.get("crime_classification"),
+                crime_category=crime_category,
                 in_egypt=analysis_data.get("in_egypt", "غير محدد"),
                 quality_notes=analysis_data.get("quality_notes")
             )

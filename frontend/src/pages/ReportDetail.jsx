@@ -2,7 +2,7 @@ import { useParams, useNavigate } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import {
   ArrowRight, MapPin, Mic, Video, Users,
-  Car, Sword, FileText, AlertCircle,
+  Car, Sword, FileText, AlertCircle, MessageSquare,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -44,6 +44,33 @@ const INTENSITY_CLASSES = {
   high:   "bg-red-100 text-red-800",
 }
 const INTENSITY_LABELS = { low: "منخفض", medium: "متوسط", high: "مرتفع" }
+
+const CRIME_CATEGORIES = {
+  1: "أعمال العنف والمشاجرات",
+  2: "أعمال البلطجة وترويع المواطنين",
+  3: "الاستخدام غير القانوني للأسلحة",
+  4: "الجرائم المرورية وتعريض الأرواح للخطر",
+  5: "التعدي على الآداب والقيم العامة",
+  6: "السرقة والنشل والسطو",
+  7: "تعاطي أو ترويج المخدرات",
+  8: "التحرش الجسدي واللفظي",
+  9: "لا شيء",
+  10: "اخري",
+}
+
+const CATEGORY_COLORS = [
+  "", // 0 unused
+  "bg-red-100 text-red-800",       // 1 violence
+  "bg-orange-100 text-orange-800", // 2 thuggery
+  "bg-rose-100 text-rose-800",     // 3 weapons
+  "bg-amber-100 text-amber-800",   // 4 traffic
+  "bg-pink-100 text-pink-800",     // 5 morality
+  "bg-yellow-100 text-yellow-800", // 6 theft
+  "bg-purple-100 text-purple-800", // 7 drugs
+  "bg-fuchsia-100 text-fuchsia-800", // 8 harassment
+  "bg-slate-100 text-slate-600",   // 9 none
+  "bg-gray-100 text-gray-600",     // 10 other
+]
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -224,6 +251,22 @@ export default function ReportDetail() {
             <InfoRow label="الجريمة الأساسية" value={report.rule_violated} />
             <InfoRow label="داخل مصر"          value={report.in_egypt} />
             <InfoRow label="التصنيف القانوني"  value={report.crime_classification} />
+            <InfoRow label="عدد الإشارات" value={report.mention_count ?? 1} />
+            {video?.crime_category?.length > 0 && (
+              <div className="flex gap-3 py-1.5 border-b last:border-0 text-sm">
+                <span className="text-muted-foreground w-36 shrink-0">فئة الجريمة</span>
+                <div className="flex gap-1.5 flex-wrap">
+                  {video.crime_category.map(cat => (
+                    <span
+                      key={cat}
+                      className={`text-xs font-semibold px-2 py-0.5 rounded-full ${CATEGORY_COLORS[cat] || "bg-gray-100 text-gray-600"}`}
+                    >
+                      {CRIME_CATEGORIES[cat] || `فئة ${cat}`}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -242,6 +285,13 @@ export default function ReportDetail() {
             )}
           </CardContent>
         </Card>
+      )}
+
+      {/* Comment summary */}
+      {raw?.comment_summary && (
+        <Section icon={MessageSquare} title="ملخص التعليقات">
+          <p className="text-sm leading-relaxed">{raw.comment_summary}</p>
+        </Section>
       )}
 
       {/* Video player */}

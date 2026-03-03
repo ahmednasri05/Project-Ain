@@ -6,6 +6,7 @@ from .audio_analyzer import AudioAnalyzer, analyze_audio
 from .video_analyzer import VideoAnalyzer, analyze_video
 from .media_processor import MediaProcessor, process_media
 from .embedding import embed_texts
+from .sentiment_analyzer import SentimentAnalyzer
 from .schemas import (
     AudioAnalysis,
     AudioEvent,
@@ -16,7 +17,9 @@ from .schemas import (
     Weapon,
     Vehicle,
     LicensePlate,
-    MediaAnalysisResult
+    MediaAnalysisResult,
+    SentimentAnalysis,
+    PenalCodeArticle,
 )
 
 
@@ -25,6 +28,7 @@ __all__ = [
     'AudioAnalyzer',
     'VideoAnalyzer',
     'MediaProcessor',
+    'SentimentAnalyzer',
     # Functions
     'analyze_audio',
     'analyze_video',
@@ -40,6 +44,8 @@ __all__ = [
     'Vehicle',
     'LicensePlate',
     'MediaAnalysisResult',
+    'SentimentAnalysis',
+    'PenalCodeArticle',
     'embed_texts',
 ]
 
