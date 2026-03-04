@@ -28,10 +28,10 @@ export function fetchReport(id) {
 
 // ── Analyze ────────────────────────────────────────────────────────────────
 
-export function analyzeUrl(url) {
+export function analyzeUrl(url, { force = false, skipSentiment = false } = {}) {
   return request("/api/analyze", {
     method: "POST",
-    body: JSON.stringify({ url }),
+    body: JSON.stringify({ url, force, skip_sentiment: skipSentiment }),
   })
 }
 
@@ -53,6 +53,10 @@ export function retryFailedRequest(id) {
 
 // ── Stats ──────────────────────────────────────────────────────────────────
 
-export function fetchStats() {
-  return request("/api/stats")
+export function fetchStats(params = {}) {
+  const qs = new URLSearchParams()
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") qs.set(k, v)
+  })
+  return request(`/api/stats?${qs}`)
 }

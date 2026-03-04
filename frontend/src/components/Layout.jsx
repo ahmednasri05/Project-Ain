@@ -17,7 +17,7 @@ export default function Layout({ children }) {
       <header className="border-b bg-card sticky top-0 z-50">
         <div className="max-w-screen-xl mx-auto px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className="text-xl font-bold tracking-tight">مشروع عين</span>
+            <span className="text-xl font-bold tracking-tight">عين على مصر</span>
             <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
               نظام رصد الجرائم
             </span>

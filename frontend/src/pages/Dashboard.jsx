@@ -3,9 +3,10 @@ import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import {
-  FileText, TrendingUp, AlertTriangle, Shield,
+  FileText, TrendingUp, AlertTriangle,
   Search, RotateCcw, Send, ChevronUp, ChevronDown,
 } from "lucide-react"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -96,6 +97,41 @@ function StatCard({ title, value, sub, icon: Icon, color }) {
   )
 }
 
+function ClassificationCard({ by_classification, icon: Icon }) {
+  const rows = [
+    { label: "جناية",  color: "text-red-600",    dot: "bg-red-500" },
+    { label: "جنحة",   color: "text-orange-600", dot: "bg-orange-500" },
+    { label: "مخالفة", color: "text-yellow-700", dot: "bg-yellow-500" },
+  ]
+  return (
+    <Card>
+      <CardContent className="p-5">
+        <div className="flex items-start justify-between">
+          <div className="flex-1">
+            <p className="text-sm text-muted-foreground mb-3">الجرائم الجنائية</p>
+            <div className="space-y-1.5">
+              {rows.map(({ label, color, dot }) => (
+                <div key={label} className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <span className={`w-2 h-2 rounded-full ${dot}`} />
+                    <span className="text-sm">{label}</span>
+                  </div>
+                  <span className={`text-lg font-bold ${color}`}>
+                    {by_classification?.[label] ?? "—"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="p-2 rounded-lg bg-red-500 ms-4">
+            <Icon className="w-5 h-5 text-white" />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 function SortIcon({ field, sortBy, sortOrder }) {
   if (sortBy !== field) return null
   return sortOrder === "asc"
@@ -115,6 +151,8 @@ export default function Dashboard() {
   const [sortBy, setSortBy] = useState("processed_at")
   const [sortOrder, setSortOrder] = useState("desc")
   const [urlInput, setUrlInput] = useState("")
+  const [force, setForce] = useState(false)
+  const [skipSentiment, setSkipSentiment] = useState(false)
   const [submitting, setSubmitting] = useState(false)
 
   const limit = 20
@@ -141,8 +179,16 @@ export default function Dashboard() {
 
   // ── Queries ───────────────────────────────────────────────────────────────
   const statsQuery = useQuery({
-    queryKey: ["stats"],
-    queryFn: fetchStats,
+    queryKey: ["stats", dangerRange, classification, inEgypt, crimeCategory],
+    queryFn: () => {
+      const rangeParams = dangerRange !== EMPTY ? DANGER_RANGES[dangerRange] : {}
+      return fetchStats({
+        ...rangeParams,
+        crime_classification: classification !== EMPTY ? classification : undefined,
+        in_egypt: inEgypt !== EMPTY ? inEgypt : undefined,
+        crime_category: crimeCategory !== EMPTY ? crimeCategory : undefined,
+      })
+    },
     staleTime: 30_000,
   })
 
@@ -175,7 +221,7 @@ export default function Dashboard() {
     if (!urlInput.trim()) return
     setSubmitting(true)
     try {
-      const res = await analyzeUrl(urlInput.trim())
+      const res = await analyzeUrl(urlInput.trim(), { force, skipSentiment })
       toast.success(
         res.type === "full"
           ? `تمت إضافة الرابط للمعالجة الكاملة (${res.identifier})`
@@ -198,7 +244,7 @@ export default function Dashboard() {
           <p className="text-muted-foreground text-sm mt-0.5">نظام رصد الجرائم الإلكترونية</p>
         </div>
         {/* Analyze form */}
-        <form onSubmit={handleAnalyze} className="flex gap-2 items-center">
+        <form onSubmit={handleAnalyze} className="flex gap-2 items-center flex-wrap justify-end">
           <Input
             value={urlInput}
             onChange={e => setUrlInput(e.target.value)}
@@ -206,6 +252,25 @@ export default function Dashboard() {
             className="w-96 text-start"
             dir="ltr"
           />
+          {/* Options */}
+          <div className="flex items-center gap-4 text-sm">
+            <label className="flex items-center gap-1.5 cursor-pointer select-none">
+              <Checkbox
+                id="opt-force"
+                checked={force}
+                onCheckedChange={v => setForce(!!v)}
+              />
+              إجبار
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer select-none">
+              <Checkbox
+                id="opt-skip-sentiment"
+                checked={skipSentiment}
+                onCheckedChange={v => setSkipSentiment(!!v)}
+              />
+              تجاهل تحليل التعليقات
+            </label>
+          </div>
           <Button type="submit" disabled={submitting || !urlInput.trim()}>
             <Send className="w-4 h-4" />
             {submitting ? "جارٍ..." : "تحليل"}
@@ -214,7 +279,7 @@ export default function Dashboard() {
       </div>
 
       {/* Stats cards */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-3 gap-4">
         <StatCard
           title="إجمالي التقارير"
           value={stats?.total_reports}
@@ -227,19 +292,9 @@ export default function Dashboard() {
           icon={TrendingUp}
           color="bg-orange-500"
         />
-        <StatCard
-          title="جنايات"
-          value={stats?.by_classification?.["جناية"]}
-          sub="جريمة جنائية"
+        <ClassificationCard
+          by_classification={stats?.by_classification}
           icon={AlertTriangle}
-          color="bg-red-500"
-        />
-        <StatCard
-          title="حرجة"
-          value={stats?.by_severity?.critical}
-          sub="مستوى خطر حرج"
-          icon={Shield}
-          color="bg-rose-600"
         />
       </div>
 

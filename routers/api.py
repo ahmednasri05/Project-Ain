@@ -29,6 +29,8 @@ router = APIRouter(prefix="/api")
 
 class AnalyzeRequest(BaseModel):
     url: str
+    force: bool = False
+    skip_sentiment: bool = False
 
 
 # ── Reports ───────────────────────────────────────────────────────────────────
@@ -39,7 +41,7 @@ async def list_reports(
     limit: int = Query(20, ge=1, le=100),
     severity: Optional[str] = None,
     crime_classification: Optional[str] = None,
-    in_egypt: Optional[bool] = None,
+    in_egypt: Optional[str] = None,
     crime_category: Optional[int] = Query(None, ge=1, le=10),
     min_danger: Optional[int] = Query(None, ge=0, le=10),
     max_danger: Optional[int] = Query(None, ge=0, le=10),
@@ -69,7 +71,7 @@ async def list_reports(
         if in_egypt:
             q = q.eq("in_egypt", in_egypt)
         if crime_category is not None:
-            q = q.contains("crime_category", [crime_category])
+            q = q.filter("crime_category", "cs", f"{{{crime_category}}}")
         if min_danger is not None:
             q = q.gte("danger_score", min_danger)
         if max_danger is not None:
@@ -125,8 +127,8 @@ async def analyze_url(body: AnalyzeRequest, background_tasks: BackgroundTasks):
 
     if _is_instagram_url(url):
         shortcode = _extract_shortcode(url)
-        background_tasks.add_task(run_batch_pipeline, [shortcode])
-        logger.info(f"[API] Queued full pipeline for shortcode: {shortcode}")
+        background_tasks.add_task(run_batch_pipeline, [shortcode], body.skip_sentiment, body.force)
+        logger.info(f"[API] Queued full pipeline for shortcode: {shortcode} (force={body.force}, skip_sentiment={body.skip_sentiment})")
         return {"queued": True, "type": "full", "identifier": shortcode}
     else:
         asset_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -206,16 +208,31 @@ async def retry_failed_request(request_id: int, background_tasks: BackgroundTask
 # ── Stats ─────────────────────────────────────────────────────────────────────
 
 @router.get("/stats")
-async def get_stats():
+async def get_stats(
+    min_danger: Optional[int] = None,
+    max_danger: Optional[int] = None,
+    crime_classification: Optional[str] = None,
+    in_egypt: Optional[str] = None,
+    crime_category: Optional[int] = None,
+):
     """Aggregate stats for the dashboard header cards."""
     def _query():
         supabase = get_supabase_client()
-        response = (
+        q = (
             supabase.table("processed_crime_reports")
-            .select("danger_score, crime_classification, severity, crime_category")
-            .execute()
+            .select("danger_score, crime_classification, severity, crime_category, in_egypt")
         )
-        return response.data or []
+        if min_danger is not None:
+            q = q.gte("danger_score", min_danger)
+        if max_danger is not None:
+            q = q.lte("danger_score", max_danger)
+        if crime_classification:
+            q = q.eq("crime_classification", crime_classification)
+        if in_egypt:
+            q = q.eq("in_egypt", in_egypt)
+        if crime_category is not None:
+            q = q.filter("crime_category", "cs", f"{{{crime_category}}}")
+        return q.execute().data or []
 
     rows = await asyncio.to_thread(_query)
 

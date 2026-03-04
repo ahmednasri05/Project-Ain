@@ -244,9 +244,14 @@ async def bulk_save_comments(
 
 # ── Pipeline run logging (thin CRUD — no domain logic) ────────────────────────
 
-async def insert_pipeline_run(shortcode: str) -> int:
+async def insert_pipeline_run(shortcode: str, status: str = "running") -> int:
     """
-    Insert a new 'running' row into pipeline_runs.
+    Insert a new pipeline_runs row.
+
+    Args:
+        shortcode: Instagram shortcode
+        status:    Initial status — use 'scraping' before Apify starts,
+                   'running' once Apify data is available (default).
 
     Returns:
         int: The new row's id — pass this to update_pipeline_run later.
@@ -255,7 +260,7 @@ async def insert_pipeline_run(shortcode: str) -> int:
         supabase = get_supabase_client()
         response = supabase.table("pipeline_runs").insert({
             "shortcode": shortcode,
-            "status": "running",
+            "status": status,
             "triggered_at": datetime.now(timezone.utc).isoformat(),
         }).execute()
         if not response.data:

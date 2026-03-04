@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils"
 
 const STATUS_MAP = {
+  scraping:          { label: "جارٍ (Apify)", className: "bg-sky-100 text-sky-800 border-sky-200", pulse: true },
   running:           { label: "جارٍ", className: "bg-blue-100 text-blue-800 border-blue-200", pulse: true },
   success:           { label: "نجح", className: "bg-green-100 text-green-800 border-green-200" },
   error:             { label: "خطأ", className: "bg-red-100 text-red-800 border-red-200" },

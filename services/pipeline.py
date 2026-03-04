@@ -82,6 +82,7 @@ async def _process_reel_from_data(
     comments: list,
     skip_sentiment: bool = False,
     force: bool = False,
+    run_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Run steps 2-9 of the pipeline for a reel whose Apify data is already available.
@@ -113,7 +114,7 @@ async def _process_reel_from_data(
     audio_storage_path = None
 
     _result: Dict[str, Any] = {"status": "error", "shortcode": shortcode, "reason": "pipeline did not complete"}
-    _run_id:    Optional[int] = None
+    _run_id:    Optional[int] = run_id
     _start_time = datetime.now(timezone.utc)
     _attempts   = 0
     _current_step = 2
@@ -123,7 +124,11 @@ async def _process_reel_from_data(
     print(f"  ✓ {len(comments)} comment(s) fetched")
 
     try:
-        _run_id = await insert_pipeline_run(shortcode)
+        if _run_id is None:
+            _run_id = await insert_pipeline_run(shortcode)
+        else:
+            # Transition from 'scraping' → 'running' now that Apify data is available
+            await update_pipeline_run(_run_id, {"status": "running"})
 
         while True:
             try:
@@ -425,6 +430,13 @@ async def run_batch_pipeline(
     if not to_scrape:
         return [results_map[sc] for sc in normalized]
 
+    # ── Pre-insert pipeline_run rows so the monitor shows them immediately ──
+    print(f"\n[—] Registering {len(to_scrape)} pipeline run(s) (status: scraping)...")
+    run_id_list = await asyncio.gather(
+        *[insert_pipeline_run(sc, status="scraping") for sc in to_scrape]
+    )
+    pre_run_ids: Dict[str, int] = dict(zip(to_scrape, run_id_list))
+
     # ── Shared semaphore for steps 2-9 ─────────────────────────────────
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_PIPELINES)
     process_tasks: list[asyncio.Task] = []
@@ -437,6 +449,7 @@ async def run_batch_pipeline(
                 apify_result["comments"],
                 skip_sentiment=skip_sentiment,
                 force=force,
+                run_id=pre_run_ids.get(sc),
             )
         results_map[sc] = result
 
@@ -452,6 +465,15 @@ async def run_batch_pipeline(
                 await insert_failed_request(sc, str(e), "step_1_apify", 1)
             except Exception:
                 pass
+            if sc in pre_run_ids:
+                try:
+                    await update_pipeline_run(pre_run_ids[sc], {
+                        "status": "error",
+                        "error_reason": f"Apify batch run failed: {e}",
+                        "completed_at": datetime.now(timezone.utc).isoformat(),
+                    })
+                except Exception:
+                    pass
         return [results_map.get(sc, {"status": "error", "shortcode": sc, "reason": "unknown"}) for sc in normalized]
 
     first_succeeded = {sc: r for sc, r in first_batch.items() if r is not None}
@@ -500,6 +522,15 @@ async def run_batch_pipeline(
                 await insert_failed_request(sc, "Apify returned no results", "step_1_apify", MAX_ATTEMPTS)
             except Exception as log_err:
                 print(f"  [logger] failed to write failed_request for {sc}: {log_err}")
+            if sc in pre_run_ids:
+                try:
+                    await update_pipeline_run(pre_run_ids[sc], {
+                        "status": "error",
+                        "error_reason": f"Apify returned no results after {MAX_ATTEMPTS} attempts",
+                        "completed_at": datetime.now(timezone.utc).isoformat(),
+                    })
+                except Exception as log_err:
+                    print(f"  [logger] failed to update pipeline_run for {sc}: {log_err}")
 
     if first_failed:
         retry_task = asyncio.create_task(_retry_apify(first_failed))

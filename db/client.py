@@ -10,8 +10,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_URL = "https://lbhhhypaetweknyoeonq.supabase.co"
+SUPABASE_KEY = "sb_secret_lhDyod3m4WrM6Clj1_TD4A_0-ZkRMPM" 
 
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise EnvironmentError(
