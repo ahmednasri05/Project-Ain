@@ -6,6 +6,7 @@ Supabase integration for Instagram reels and comments.
 from .client import get_supabase_client, get_storage_bucket
 from .crud import (
     save_reel,
+    save_dm_reel_stub,
     get_reel_by_shortcode,
     increment_mention_count,
     save_comment_thread,
@@ -30,6 +31,7 @@ __all__ = [
     "get_storage_bucket",
     # Instagram DB
     "save_reel",
+    "save_dm_reel_stub",
     "get_reel_by_shortcode",
     "increment_mention_count",
     "save_comment_thread",

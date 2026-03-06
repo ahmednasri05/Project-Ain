@@ -12,6 +12,33 @@ from ai.schemas import MediaAnalysisResult
 
 
 
+async def save_dm_reel_stub(asset_id: str, caption: Optional[str] = None) -> None:
+    """
+    Upsert a minimal stub row into raw_instagram_reels for a DM-sourced reel.
+
+    DM reels are not scraped via Apify, so they have no real Instagram metadata.
+    This stub satisfies the FK constraint on processed_crime_reports.reel_shortcode
+    without polluting the table with fake scrape data.
+
+    Args:
+        asset_id: The reel_video_id from the DM webhook (used as both instagram_id
+                  and shortcode since we have no real shortcode for DM reels).
+        caption:  Optional caption from the DM attachment payload.
+    """
+    def _upsert():
+        supabase = get_supabase_client()
+        supabase.table("raw_instagram_reels").upsert(
+            {
+                "instagram_id": asset_id,
+                "shortcode": asset_id,
+                "caption": caption,
+            },
+            on_conflict="shortcode",
+        ).execute()
+
+    await asyncio.to_thread(_upsert)
+
+
 async def get_reel_by_shortcode(shortcode: str) -> Optional[Dict[str, Any]]:
     """
     Fetch an existing reel by shortcode.

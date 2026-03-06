@@ -20,7 +20,7 @@ from typing import Optional
 
 from util.helpers_ytdlp import download_video_ytdlp as download_video, extract_audio
 from ai.media_processor import MediaProcessor
-from db import insert_pipeline_run, update_pipeline_run, save_processed_crime_report
+from db import insert_pipeline_run, update_pipeline_run, save_processed_crime_report, save_dm_reel_stub
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +92,7 @@ async def run_dm_pipeline(
         print(f"  ✓ Action       : {action}")
 
         print(f"  → Saving crime report to database...")
+        await save_dm_reel_stub(asset_id=asset_id, caption=caption)
         await save_processed_crime_report(shortcode=asset_id, media_analysis_result=analysis)
         print(f"  ✓ Crime report saved")
 
