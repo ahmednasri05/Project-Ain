@@ -20,7 +20,7 @@ from typing import Optional
 
 from util.helpers_ytdlp import download_video_ytdlp as download_video, extract_audio
 from ai.media_processor import MediaProcessor
-from db import insert_pipeline_run, update_pipeline_run, save_processed_crime_report, save_dm_reel_stub
+from db import insert_pipeline_run, update_pipeline_run, save_processed_crime_report, save_dm_reel_stub, upload_to_supabase, get_storage_bucket
 
 logger = logging.getLogger(__name__)
 
@@ -91,12 +91,35 @@ async def run_dm_pipeline(
         print(f"  ✓ Sentiment    : {sentiment}")
         print(f"  ✓ Action       : {action}")
 
+        # ── Upload video + audio to Supabase Storage ─────────────────
+        print(f"\n  → Uploading media to storage...")
+        bucket = get_storage_bucket()
+        video_remote = f"videos/{asset_id}.mp4"
+        if audio_path:
+            audio_remote = f"audio/{asset_id}.mp3"
+            video_storage_path, audio_storage_path = await asyncio.gather(
+                upload_to_supabase(video_path, bucket, video_remote),
+                upload_to_supabase(audio_path, bucket, audio_remote),
+            )
+            print(f"  ✓ video → {bucket}/{video_storage_path}")
+            print(f"  ✓ audio → {bucket}/{audio_storage_path}")
+        else:
+            video_storage_path = await upload_to_supabase(video_path, bucket, video_remote)
+            audio_storage_path = None
+            print(f"  ✓ video → {bucket}/{video_storage_path}")
+            print(f"  – audio skipped (no audio track)")
+
         print(f"  → Saving crime report to database...")
-        await save_dm_reel_stub(asset_id=asset_id, caption=caption)
+        await save_dm_reel_stub(
+            asset_id=asset_id,
+            caption=caption,
+            video_storage_path=video_storage_path,
+            audio_storage_path=audio_storage_path,
+        )
         await save_processed_crime_report(shortcode=asset_id, media_analysis_result=analysis)
         print(f"  ✓ Crime report saved")
 
-        elapsed = (datetime.now() - start_time).total_seconds()
+        elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
         print(f"\n[DM Pipeline] Done in {elapsed:.1f}s")
 
         _result = {

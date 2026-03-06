@@ -12,18 +12,25 @@ from ai.schemas import MediaAnalysisResult
 
 
 
-async def save_dm_reel_stub(asset_id: str, caption: Optional[str] = None) -> None:
+async def save_dm_reel_stub(
+    asset_id: str,
+    caption: Optional[str] = None,
+    video_storage_path: Optional[str] = None,
+    audio_storage_path: Optional[str] = None,
+) -> None:
     """
     Upsert a minimal stub row into raw_instagram_reels for a DM-sourced reel.
 
     DM reels are not scraped via Apify, so they have no real Instagram metadata.
     This stub satisfies the FK constraint on processed_crime_reports.reel_shortcode
-    without polluting the table with fake scrape data.
+    and persists the Supabase Storage paths for the uploaded media.
 
     Args:
-        asset_id: The reel_video_id from the DM webhook (used as both instagram_id
-                  and shortcode since we have no real shortcode for DM reels).
-        caption:  Optional caption from the DM attachment payload.
+        asset_id:           The reel_video_id from the DM webhook (used as both
+                            instagram_id and shortcode).
+        caption:            Optional caption from the DM attachment payload.
+        video_storage_path: Path in Supabase Storage (e.g. "videos/12345.mp4").
+        audio_storage_path: Path in Supabase Storage (e.g. "audio/12345.mp3").
     """
     def _upsert():
         supabase = get_supabase_client()
@@ -32,6 +39,8 @@ async def save_dm_reel_stub(asset_id: str, caption: Optional[str] = None) -> Non
                 "instagram_id": asset_id,
                 "shortcode": asset_id,
                 "caption": caption,
+                "storage_bucket_path": video_storage_path,
+                "storage_audio_path": audio_storage_path,
             },
             on_conflict="shortcode",
         ).execute()
